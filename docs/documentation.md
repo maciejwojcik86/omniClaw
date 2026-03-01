@@ -17,6 +17,7 @@ It combines:
 - M01: complete (kernel service skeleton)
 - M02: complete (canonical state schema)
 - M03: complete and archived (`2026-03-01-m03-linux-provisioning`)
+- M04: in progress (`m04-agent-runtime-bootstrap`)
 
 ## Local Setup
 
@@ -110,7 +111,7 @@ Permissions/audit script:
 - `scripts/provisioning/list_agents_permissions.py`
   - reads AGENT rows from SQLite
   - resolves Linux users by uid
-  - prints home/workspace owner:group:mode summary
+  - prints home, `~/.nullclaw`, `~/.nullclaw/config.json`, and `~/.nullclaw/workspace` owner:group:mode summary
 
 Verified real-host result:
 - `/v1/provisioning/actions` in `system` mode created/updated Linux user `agent_director_01`.

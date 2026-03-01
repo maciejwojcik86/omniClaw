@@ -58,11 +58,11 @@ Execution start instruction
 - Resume from the active milestone listed in `docs/current-task.md`.
 - If `docs/current-task.md` and `docs/plan.md` disagree, reconcile them before coding.
 
-Current M03 execution approach
+Current M04 execution approach
 
-- Implement provisioning in modular steps and capture each validated step as a reusable local skill.
-- Keep helper scripts split by concern:
-  - Linux user creation
-  - Workspace scaffold creation
-  - Ownership/group permission application
-- Use dry-run-first execution for host-affecting scripts and only then apply mode.
+- Implement runtime bootstrap in narrow, testable steps with OpenSpec artifact-first discipline.
+- Use configurable Nullclaw command templates and Nullclaw home paths:
+  - config: `~/.nullclaw/config.json`
+  - workspace: `~/.nullclaw/workspace`
+- Keep restricted user-context execution and drafts-bound output policy explicit in service checks.
+- Capture deterministic run metadata per launch and cover with unit tests + smoke path.

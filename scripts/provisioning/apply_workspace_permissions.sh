@@ -76,14 +76,24 @@ if [[ ! -d "$workspace_root" ]]; then
   exit 1
 fi
 
-home_root="$(dirname "$workspace_root")"
-if [[ ! -d "$home_root" ]]; then
-  echo "Home root '$home_root' does not exist" >&2
+owner_home="$(getent passwd "$owner_user" | cut -d: -f6)"
+if [[ -z "$owner_home" || ! -d "$owner_home" ]]; then
+  echo "Owner home '$owner_home' does not exist" >&2
   exit 1
 fi
 
-run_cmd chown "$owner_user:$manager_group" "$home_root"
-run_cmd chmod u=rwx,g=rx,o= "$home_root"
+workspace_parent="$(dirname "$workspace_root")"
+if [[ ! -d "$workspace_parent" ]]; then
+  echo "Workspace parent '$workspace_parent' does not exist" >&2
+  exit 1
+fi
+
+run_cmd chown "$owner_user:$manager_group" "$owner_home"
+run_cmd chmod u=rwx,g=rx,o= "$owner_home"
+if [[ "$workspace_parent" != "$owner_home" ]]; then
+  run_cmd chown "$owner_user:$manager_group" "$workspace_parent"
+  run_cmd chmod u=rwx,g=rx,o= "$workspace_parent"
+fi
 run_cmd chown -R "$owner_user:$manager_group" "$workspace_root"
 run_cmd chmod -R u=rwX,g=rwX,o= "$workspace_root"
 run_cmd find "$workspace_root" -type d -exec chmod g+s {} +

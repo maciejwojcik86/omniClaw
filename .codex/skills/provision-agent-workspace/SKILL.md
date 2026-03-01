@@ -35,9 +35,9 @@ This skill combines previously split steps:
 ## Quick Workflow
 
 1. Dry-run local provisioning workflow:
-   - `./scripts/provision_agent_workflow.sh --username agent_director_01 --workspace-root /home/agent_director_01/workspace --manager-group sudo`
+   - `./scripts/provision_agent_workflow.sh --username agent_director_01 --workspace-root /home/agent_director_01/.nullclaw/workspace --manager-group sudo`
 2. Apply local provisioning workflow:
-   - `./scripts/provision_agent_workflow.sh --apply --username agent_director_01 --workspace-root /home/agent_director_01/workspace --manager-group sudo`
+   - `./scripts/provision_agent_workflow.sh --apply --username agent_director_01 --workspace-root /home/agent_director_01/.nullclaw/workspace --manager-group sudo`
 3. Endpoint-triggered provisioning:
    - `./scripts/trigger_kernel_action.sh --apply --payload-file /home/macos/omniClaw/var/provisioning/create-agent-director-01.json`
 4. Audit current agents and permissions:
@@ -47,6 +47,7 @@ This skill combines previously split steps:
 
 - `id <username>`
 - `getent passwd <username>`
+- `ls -la /home/<username>/.nullclaw/config.json`
 - `find <workspace-root> -maxdepth 2 -type d | sort`
 - `./scripts/list_agents_permissions.py --database /home/macos/omniClaw/omniclaw.db`
 

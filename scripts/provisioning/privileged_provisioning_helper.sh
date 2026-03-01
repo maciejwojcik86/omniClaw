@@ -126,14 +126,23 @@ case "$action" in
       echo "Workspace root does not exist: $workspace_root" >&2
       exit 2
     }
-    home_root="$(dirname "$workspace_root")"
-    [[ -d "$home_root" ]] || {
-      echo "Home root does not exist: $home_root" >&2
+    owner_home="$(getent passwd "$owner_user" | cut -d: -f6)"
+    [[ -n "$owner_home" && -d "$owner_home" ]] || {
+      echo "Owner home does not exist: $owner_home" >&2
+      exit 2
+    }
+    workspace_parent="$(dirname "$workspace_root")"
+    [[ -d "$workspace_parent" ]] || {
+      echo "Workspace parent does not exist: $workspace_parent" >&2
       exit 2
     }
 
-    chown "$owner_user:$manager_group" "$home_root"
-    chmod u=rwx,g=rx,o= "$home_root"
+    chown "$owner_user:$manager_group" "$owner_home"
+    chmod u=rwx,g=rx,o= "$owner_home"
+    if [[ "$workspace_parent" != "$owner_home" ]]; then
+      chown "$owner_user:$manager_group" "$workspace_parent"
+      chmod u=rwx,g=rx,o= "$workspace_parent"
+    fi
     chown -R "$owner_user:$manager_group" "$workspace_root"
     chmod -R u=rwX,g=rwX,o= "$workspace_root"
     find "$workspace_root" -type d -exec chmod g+s {} +

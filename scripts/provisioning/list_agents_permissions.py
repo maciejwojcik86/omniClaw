@@ -115,16 +115,38 @@ def main() -> int:
             "uid",
             "linux_user",
             "home_owner:group/mode",
+            "nullclaw_owner:group/mode",
+            "config_owner:group/mode",
             "workspace_owner:group/mode",
         ]
     ]
 
     for agent in agents:
         username = resolve_username(agent.linux_uid)
-        home_path = Path(f"/home/{username}") if username and not username.startswith("<") else Path("<unknown>")
-        workspace_path = home_path / "workspace" if str(home_path) != "<unknown>" else Path("<unknown>")
+        home_path = Path("<unknown>")
+        nullclaw_path = Path("<unknown>")
+        config_path = Path("<unknown>")
+        workspace_path = Path("<unknown>")
+        if username and not username.startswith("<"):
+            try:
+                home_path = Path(pwd.getpwnam(username).pw_dir)
+                nullclaw_path = home_path / ".nullclaw"
+                config_path = nullclaw_path / "config.json"
+                workspace_path = nullclaw_path / "workspace"
+            except KeyError:
+                pass
 
         home_info = stat_info(home_path) if str(home_path) != "<unknown>" else FsInfo("<unknown>", "<unknown>", "<unknown>", "<unknown>")
+        nullclaw_info = (
+            stat_info(nullclaw_path)
+            if str(nullclaw_path) != "<unknown>"
+            else FsInfo("<unknown>", "<unknown>", "<unknown>", "<unknown>")
+        )
+        config_info = (
+            stat_info(config_path)
+            if str(config_path) != "<unknown>"
+            else FsInfo("<unknown>", "<unknown>", "<unknown>", "<unknown>")
+        )
         workspace_info = (
             stat_info(workspace_path)
             if str(workspace_path) != "<unknown>"
@@ -139,6 +161,8 @@ def main() -> int:
                 str(agent.linux_uid) if agent.linux_uid is not None else "<null>",
                 username,
                 f"{home_info.owner}:{home_info.group}/{home_info.mode}",
+                f"{nullclaw_info.owner}:{nullclaw_info.group}/{nullclaw_info.mode}",
+                f"{config_info.owner}:{config_info.group}/{config_info.mode}",
                 f"{workspace_info.owner}:{workspace_info.group}/{workspace_info.mode}",
             ]
         )

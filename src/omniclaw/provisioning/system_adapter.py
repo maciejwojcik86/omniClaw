@@ -98,13 +98,18 @@ class SystemProvisioningAdapter:
         manager_group: str,
         workspace_root: Path,
     ) -> PermissionProvisioningResult:
-        root = str(workspace_root.expanduser().resolve())
-        home_root = str(workspace_root.expanduser().resolve().parent)
+        resolved_workspace = workspace_root.expanduser().resolve()
+        root = str(resolved_workspace)
+        workspace_parent = str(resolved_workspace.parent)
         if self._helper_path:
             self._run_helper(["apply_permissions", owner_user, manager_group, root])
         else:
-            self._run(["chown", f"{owner_user}:{manager_group}", home_root])
-            self._run(["chmod", "u=rwx,g=rx,o=", home_root])
+            owner_home = self._lookup_home_dir(owner_user)
+            self._run(["chown", f"{owner_user}:{manager_group}", owner_home])
+            self._run(["chmod", "u=rwx,g=rx,o=", owner_home])
+            if workspace_parent != owner_home:
+                self._run(["chown", f"{owner_user}:{manager_group}", workspace_parent])
+                self._run(["chmod", "u=rwx,g=rx,o=", workspace_parent])
             self._run(["chown", "-R", f"{owner_user}:{manager_group}", root])
             self._run(["chmod", "-R", "u=rwX,g=rwX,o=", root])
             self._run(["find", root, "-type", "d", "-exec", "chmod", "g+s", "{}", "+"])
@@ -128,6 +133,18 @@ class SystemProvisioningAdapter:
         if process.returncode != 0:
             return None
         return int(process.stdout.strip())
+
+    def _lookup_home_dir(self, username: str) -> str:
+        process = subprocess.run(
+            ["getent", "passwd", username],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        record = process.stdout.strip().split(":")
+        if len(record) < 6 or not record[5]:
+            raise RuntimeError(f"Could not resolve home directory for '{username}'")
+        return record[5]
 
     def _run(self, command: list[str]) -> None:
         subprocess.run(command, capture_output=True, text=True, check=True)

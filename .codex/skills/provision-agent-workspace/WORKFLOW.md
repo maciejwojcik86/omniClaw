@@ -3,7 +3,7 @@
 ## Inputs
 
 - `username` (required)
-- `workspace_root` (required)
+- `workspace_root` (required, prefer `/home/<user>/.nullclaw/workspace`)
 - `manager_group` (required)
 - optional: `shell`, `uid`, endpoint payload path
 
@@ -27,4 +27,6 @@ Use `list_agents_permissions.py` to print:
 - status + autonomy
 - uid and Linux username
 - `/home/<user>` owner/group/mode
-- `/home/<user>/workspace` owner/group/mode
+- `/home/<user>/.nullclaw` owner/group/mode
+- `/home/<user>/.nullclaw/config.json` owner/group/mode
+- `/home/<user>/.nullclaw/workspace` owner/group/mode
