@@ -1,0 +1,27 @@
+schema: spec-driven
+
+context: |
+  Project: OmniClaw Kernel (Python/FastAPI baseline)
+  Mission: Orchestrate isolated Linux-user agents using formal Markdown/YAML forms,
+  canonical relational state, waterfall budgets, and managed skills lifecycle.
+  Primary docs: docs/current-task.md, docs/master-task-list.md,
+  docs/OmniClaw PRD.md, docs/OmniClaw Implementation Roadmap.md.
+  Workflow constraint: one active OpenSpec change at a time.
+
+rules:
+  proposal:
+    - MUST map to exactly one milestone and one change_id.
+    - MUST include explicit in-scope and out-of-scope boundaries.
+    - MUST list capability names in kebab-case.
+  specs:
+    - Every requirement MUST use SHALL or MUST language.
+    - Every requirement MUST include at least one WHEN/THEN scenario.
+    - Keep requirements implementation-agnostic and testable.
+  design:
+    - MUST include Context, Goals/Non-Goals, Decisions, and Risks/Trade-offs.
+    - For every significant decision, include rationale and one rejected alternative.
+    - Document migration/rollback notes when stateful systems are affected.
+  tasks:
+    - Group tasks by dependency order and keep each task independently verifiable.
+    - Include validation and test tasks explicitly.
+    - Avoid bundling multiple milestones in one tasks file.
