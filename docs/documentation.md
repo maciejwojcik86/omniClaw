@@ -16,7 +16,7 @@ It combines:
 - M00: complete (governance bootstrap)
 - M01: complete (kernel service skeleton)
 - M02: complete (canonical state schema)
-- M03: in progress (linux provisioning)
+- M03: complete and archived (`2026-03-01-m03-linux-provisioning`)
 
 ## Local Setup
 
@@ -111,6 +111,11 @@ Permissions/audit script:
   - reads AGENT rows from SQLite
   - resolves Linux users by uid
   - prints home/workspace owner:group:mode summary
+
+Verified real-host result:
+- `/v1/provisioning/actions` in `system` mode created/updated Linux user `agent_director_01`.
+- Workspace exists at `/home/agent_director_01/workspace` with expected structure.
+- Ownership/group policy applied (`agent_director_01:sudo`) and reflected in DB (`nodes` row for `Director_01`).
 
 ## Data Model Overview (high level)
 

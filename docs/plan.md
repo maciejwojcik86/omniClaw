@@ -11,11 +11,11 @@ Guiding principles
 ## Verification Checklist (keep current)
 
 Core checks after each milestone:
-- [ ] `uv run pytest -q`
-- [ ] `openspec validate --type change <change-id> --strict`
+- [x] `uv run pytest -q`
+- [x] `openspec validate --type change <change-id> --strict`
 
 Checkpoint sweep:
-- [ ] `openspec validate --all --strict`
+- [x] `openspec validate --all --strict`
 
 ## Milestone Status
 
@@ -24,7 +24,7 @@ Checkpoint sweep:
 | M00 | `m00-governance-bootstrap` | Governance | completed | none | engineering | AGENTS + trackers + OpenSpec config updated; strict validation passes |
 | M01 | `m01-kernel-service-skeleton` | Foundation | completed | M00 | engineering | FastAPI app boots; `/healthz` returns 200 |
 | M02 | `m02-canonical-state-schema` | Foundation | completed | M01 | engineering | Core tables + enums + migration + insert test |
-| M03 | `m03-linux-provisioning` | Foundation | in_progress | M02 | engineering | Provisioning adapters + workspace permissions verified |
+| M03 | `m03-linux-provisioning` | Foundation | completed | M02 | engineering | Provisioning adapters + workspace permissions verified |
 | M04 | `m04-agent-runtime-bootstrap` | Foundation | planned | M03 | engineering | Restricted Nullclaw runtime writes to `/drafts` |
 | M05 | `m05-file-ipc-router` | Communication Bus | planned | M04 | engineering | Outbox->Inbox route in <=5s with permission checks |
 | M06 | `m06-forms-ledger-state-machine` | Communication Bus | planned | M05 | engineering | Form IDs + state transitions + holder/history tracking |
@@ -44,7 +44,7 @@ This compact checklist complements the detailed milestone plan above and is kept
 
 ### Phase 1: Foundation (Database and Physical OS)
 - [x] Step 1: Core database schema.
-- [ ] Step 2: Linux user and workspace provisioning.
+- [x] Step 2: Linux user and workspace provisioning.
 - [ ] Step 3: Nullclaw bootstrap and manual restricted execution.
 
 ### Phase 2: Communication and Context (IPC and Templating)
@@ -251,3 +251,5 @@ Acceptance criteria:
 - 2026-03-01: Adopted mandatory skill-first modular provisioning workflow; added project-local skills and helper scripts for user creation, workspace scaffold, and permission policy.
 - 2026-03-01: Added privileged provisioning helper allowlist pattern and system adapter helper integration for endpoint-driven host actions with SQLite node tracking.
 - 2026-03-01: Consolidated provisioning skills into `.codex/skills/provision-agent-workspace` and added `scripts/provisioning/list_agents_permissions.py` audit report script.
+- 2026-03-01: Verified real system provisioning flow end-to-end (Linux user `agent_director_01`, workspace scaffold, permissions, and SQLite node tracking) via `/v1/provisioning/actions`.
+- 2026-03-01: Archived OpenSpec change `m03-linux-provisioning` as `2026-03-01-m03-linux-provisioning`; M03 marked complete.
