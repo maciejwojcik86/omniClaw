@@ -12,6 +12,15 @@ from omniclaw.provisioning.scaffold import ensure_workspace_tree
 
 
 class SystemProvisioningAdapter:
+    def __init__(
+        self,
+        *,
+        helper_path: str | None = None,
+        helper_use_sudo: bool = False,
+    ) -> None:
+        self._helper_path = str(Path(helper_path).expanduser().resolve()) if helper_path else None
+        self._helper_use_sudo = helper_use_sudo
+
     def ensure_user(
         self,
         *,
@@ -25,16 +34,29 @@ class SystemProvisioningAdapter:
         created = existing_uid is None
 
         if created:
-            command: list[str] = ["useradd", "-m", "-U", "-d", home_dir, "-s", shell]
-            if uid is not None:
-                command.extend(["-u", str(uid)])
-            command.append(username)
-            self._run(command)
+            if self._helper_path:
+                helper_command = [
+                    "create_user",
+                    username,
+                    home_dir,
+                    shell,
+                    str(uid) if uid is not None else "",
+                ]
+                self._run_helper(helper_command)
+            else:
+                command: list[str] = ["useradd", "-m", "-U", "-d", home_dir, "-s", shell]
+                if uid is not None:
+                    command.extend(["-u", str(uid)])
+                command.append(username)
+                self._run(command)
             existing_uid = self._lookup_uid(username)
 
         if groups:
             group_csv = ",".join(groups)
-            self._run(["usermod", "-aG", group_csv, username])
+            if self._helper_path:
+                self._run_helper(["add_groups", username, group_csv])
+            else:
+                self._run(["usermod", "-aG", group_csv, username])
 
         return UserProvisioningResult(
             username=username,
@@ -45,9 +67,15 @@ class SystemProvisioningAdapter:
         )
 
     def ensure_workspace(self, *, workspace_root: Path) -> WorkspaceProvisioningResult:
-        scaffold_result = ensure_workspace_tree(workspace_root=workspace_root, apply=True)
+        root = workspace_root.expanduser().resolve()
+        preview = ensure_workspace_tree(workspace_root=root, apply=False)
+        if self._helper_path:
+            self._run_helper(["create_workspace", str(root)])
+            scaffold_result = preview
+        else:
+            scaffold_result = ensure_workspace_tree(workspace_root=root, apply=True)
         return WorkspaceProvisioningResult(
-            workspace_root=str(workspace_root.expanduser().resolve()),
+            workspace_root=str(root),
             created_dirs=scaffold_result["created_dirs"],
             existing_dirs=scaffold_result["existing_dirs"],
             created_files=scaffold_result["created_files"],
@@ -62,9 +90,12 @@ class SystemProvisioningAdapter:
         workspace_root: Path,
     ) -> PermissionProvisioningResult:
         root = str(workspace_root.expanduser().resolve())
-        self._run(["chown", "-R", f"{owner_user}:{manager_group}", root])
-        self._run(["chmod", "-R", "u=rwX,g=rwX,o=", root])
-        self._run(["find", root, "-type", "d", "-exec", "chmod", "g+s", "{}", "+"])
+        if self._helper_path:
+            self._run_helper(["apply_permissions", owner_user, manager_group, root])
+        else:
+            self._run(["chown", "-R", f"{owner_user}:{manager_group}", root])
+            self._run(["chmod", "-R", "u=rwX,g=rwX,o=", root])
+            self._run(["find", root, "-type", "d", "-exec", "chmod", "g+s", "{}", "+"])
         return PermissionProvisioningResult(
             owner_user=owner_user,
             manager_group=manager_group,
@@ -73,8 +104,11 @@ class SystemProvisioningAdapter:
         )
 
     def _lookup_uid(self, username: str) -> int | None:
+        command = ["id", "-u", username]
+        if self._helper_path:
+            command = self._build_helper_command(["id_uid", username])
         process = subprocess.run(
-            ["id", "-u", username],
+            command,
             capture_output=True,
             text=True,
             check=False,
@@ -85,3 +119,13 @@ class SystemProvisioningAdapter:
 
     def _run(self, command: list[str]) -> None:
         subprocess.run(command, capture_output=True, text=True, check=True)
+
+    def _run_helper(self, command: list[str]) -> None:
+        subprocess.run(self._build_helper_command(command), capture_output=True, text=True, check=True)
+
+    def _build_helper_command(self, command: list[str]) -> list[str]:
+        if not self._helper_path:
+            raise RuntimeError("Helper path is not configured")
+        if self._helper_use_sudo:
+            return ["sudo", "-n", self._helper_path, *command]
+        return [self._helper_path, *command]

@@ -14,3 +14,5 @@ node_modules/
 
 # Local runtime artifacts
 var/
+omniclaw.db
+*.db-journal

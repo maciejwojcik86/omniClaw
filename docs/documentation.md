@@ -84,6 +84,21 @@ Each step has:
 - a helper script in `scripts/provisioning/`
 - dry-run default behavior before apply mode
 
+## Privileged Provisioning Path
+
+Recommended production-style flow:
+- Keep FastAPI kernel unprivileged.
+- Enable system provisioning endpoint mode with explicit flags.
+- Route privileged host actions through:
+  - `scripts/provisioning/privileged_provisioning_helper.sh`
+- Allow only that helper in sudoers for the kernel service user.
+
+Runtime env vars:
+- `OMNICLAW_PROVISIONING_MODE=system`
+- `OMNICLAW_ALLOW_PRIVILEGED_PROVISIONING=true`
+- `OMNICLAW_PROVISIONING_HELPER_PATH=/abs/path/scripts/provisioning/privileged_provisioning_helper.sh`
+- `OMNICLAW_PROVISIONING_HELPER_USE_SUDO=true`
+
 ## Data Model Overview (high level)
 
 Canonical tables currently modeled:

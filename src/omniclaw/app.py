@@ -23,7 +23,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     session_factory = create_session_factory(resolved_settings.database_url, engine=engine)
     repository = KernelRepository(session_factory)
     mock_adapter = MockProvisioningAdapter()
-    system_adapter = SystemProvisioningAdapter()
+    system_adapter = SystemProvisioningAdapter(
+        helper_path=resolved_settings.provisioning_helper_path,
+        helper_use_sudo=resolved_settings.provisioning_helper_use_sudo,
+    )
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

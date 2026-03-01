@@ -249,3 +249,4 @@ Acceptance criteria:
 - 2026-03-01: Added long-horizon control docs (`docs/prompt.md`, `docs/plan.md`, `docs/implement.md`, `docs/documentation.md`) based on OpenAI long-horizon Codex guidance and adapted to OpenSpec workflow.
 - 2026-03-01: Merged former `docs/master-task-list.md` into `docs/plan.md` to keep one canonical planning source.
 - 2026-03-01: Adopted mandatory skill-first modular provisioning workflow; added project-local skills and helper scripts for user creation, workspace scaffold, and permission policy.
+- 2026-03-01: Added privileged provisioning helper allowlist pattern and system adapter helper integration for endpoint-driven host actions with SQLite node tracking.
