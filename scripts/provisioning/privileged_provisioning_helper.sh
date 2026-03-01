@@ -41,49 +41,23 @@ require_abs_path() {
 
 create_workspace_tree() {
   local root="$1"
-  mkdir -p "$root"/{
-    inbox/unread,
-    inbox/read,
-    outbox/pending,
-    outbox/drafts,
-    outbox/sent,
-    notes,
-    journal,
-    metrics,
-    drafts,
-    skills
-  }
+  mkdir -p "$root/inbox/unread"
+  mkdir -p "$root/inbox/read"
+  mkdir -p "$root/outbox/pending"
+  mkdir -p "$root/outbox/drafts"
+  mkdir -p "$root/outbox/sent"
+  mkdir -p "$root/notes"
+  mkdir -p "$root/journal"
+  mkdir -p "$root/metrics"
+  mkdir -p "$root/drafts"
+  mkdir -p "$root/skills"
 
-  [[ -f "$root/notes/TODO.md" ]] || cat > "$root/notes/TODO.md" <<'DOC'
-# TODO
-
-- [ ] Add first task
-DOC
-
-  [[ -f "$root/notes/DECISIONS.md" ]] || cat > "$root/notes/DECISIONS.md" <<'DOC'
-# Decisions
-
-DOC
-
-  [[ -f "$root/notes/BLOCKERS.md" ]] || cat > "$root/notes/BLOCKERS.md" <<'DOC'
-# Blockers
-
-DOC
-
-  [[ -f "$root/metrics/KPI.csv" ]] || cat > "$root/metrics/KPI.csv" <<'DOC'
-date,metric,value
-DOC
-
-  [[ -f "$root/persona_template.md" ]] || cat > "$root/persona_template.md" <<'DOC'
-# Persona Template
-
-DOC
-
-  [[ -f "$root/AGENTS.md" ]] || cat > "$root/AGENTS.md" <<'DOC'
-# AGENTS
-
-Rendered by kernel context injector.
-DOC
+  [[ -f "$root/notes/TODO.md" ]] || printf '# TODO\n\n- [ ] Add first task\n' > "$root/notes/TODO.md"
+  [[ -f "$root/notes/DECISIONS.md" ]] || printf '# Decisions\n\n' > "$root/notes/DECISIONS.md"
+  [[ -f "$root/notes/BLOCKERS.md" ]] || printf '# Blockers\n\n' > "$root/notes/BLOCKERS.md"
+  [[ -f "$root/metrics/KPI.csv" ]] || printf 'date,metric,value\n' > "$root/metrics/KPI.csv"
+  [[ -f "$root/persona_template.md" ]] || printf '# Persona Template\n\n' > "$root/persona_template.md"
+  [[ -f "$root/AGENTS.md" ]] || printf '# AGENTS\n\nRendered by kernel context injector.\n' > "$root/AGENTS.md"
 }
 
 action="${1:-}"
@@ -152,7 +126,14 @@ case "$action" in
       echo "Workspace root does not exist: $workspace_root" >&2
       exit 2
     }
+    home_root="$(dirname "$workspace_root")"
+    [[ -d "$home_root" ]] || {
+      echo "Home root does not exist: $home_root" >&2
+      exit 2
+    }
 
+    chown "$owner_user:$manager_group" "$home_root"
+    chmod u=rwx,g=rx,o= "$home_root"
     chown -R "$owner_user:$manager_group" "$workspace_root"
     chmod -R u=rwX,g=rwX,o= "$workspace_root"
     find "$workspace_root" -type d -exec chmod g+s {} +

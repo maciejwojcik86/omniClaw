@@ -88,3 +88,35 @@ def test_helper_mode_workspace_preview_remains_idempotent(monkeypatch, tmp_path:
         "create_workspace",
         str(workspace.resolve()),
     ]]
+
+
+def test_helper_mode_apply_permissions_routes_to_helper(monkeypatch, tmp_path: Path) -> None:
+    adapter = SystemProvisioningAdapter(
+        helper_path="/opt/omniclaw/privileged_provisioning_helper.sh",
+        helper_use_sudo=True,
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(command, capture_output, text, check):
+        del capture_output, text, check
+        calls.append(list(command))
+        return _CompletedProcess(returncode=0)
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    workspace = tmp_path / "workspace"
+    adapter.apply_permissions(
+        owner_user="agent_director_01",
+        manager_group="sudo",
+        workspace_root=workspace,
+    )
+
+    assert calls == [[
+        "sudo",
+        "-n",
+        "/opt/omniclaw/privileged_provisioning_helper.sh",
+        "apply_permissions",
+        "agent_director_01",
+        "sudo",
+        str(workspace.resolve()),
+    ]]

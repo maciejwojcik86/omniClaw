@@ -68,10 +68,19 @@ class SystemProvisioningAdapter:
 
     def ensure_workspace(self, *, workspace_root: Path) -> WorkspaceProvisioningResult:
         root = workspace_root.expanduser().resolve()
-        preview = ensure_workspace_tree(workspace_root=root, apply=False)
         if self._helper_path:
             self._run_helper(["create_workspace", str(root)])
-            scaffold_result = preview
+            # Kernel process may not have permission to traverse the newly-created
+            # workspace home path; return best-effort preview metadata.
+            try:
+                scaffold_result = ensure_workspace_tree(workspace_root=root, apply=False)
+            except PermissionError:
+                scaffold_result = {
+                    "created_dirs": tuple(),
+                    "existing_dirs": tuple(),
+                    "created_files": tuple(),
+                    "existing_files": tuple(),
+                }
         else:
             scaffold_result = ensure_workspace_tree(workspace_root=root, apply=True)
         return WorkspaceProvisioningResult(
@@ -90,9 +99,12 @@ class SystemProvisioningAdapter:
         workspace_root: Path,
     ) -> PermissionProvisioningResult:
         root = str(workspace_root.expanduser().resolve())
+        home_root = str(workspace_root.expanduser().resolve().parent)
         if self._helper_path:
             self._run_helper(["apply_permissions", owner_user, manager_group, root])
         else:
+            self._run(["chown", f"{owner_user}:{manager_group}", home_root])
+            self._run(["chmod", "u=rwx,g=rx,o=", home_root])
             self._run(["chown", "-R", f"{owner_user}:{manager_group}", root])
             self._run(["chmod", "-R", "u=rwX,g=rwX,o=", root])
             self._run(["find", root, "-type", "d", "-exec", "chmod", "g+s", "{}", "+"])

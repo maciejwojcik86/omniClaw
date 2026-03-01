@@ -76,6 +76,14 @@ if [[ ! -d "$workspace_root" ]]; then
   exit 1
 fi
 
+home_root="$(dirname "$workspace_root")"
+if [[ ! -d "$home_root" ]]; then
+  echo "Home root '$home_root' does not exist" >&2
+  exit 1
+fi
+
+run_cmd chown "$owner_user:$manager_group" "$home_root"
+run_cmd chmod u=rwx,g=rx,o= "$home_root"
 run_cmd chown -R "$owner_user:$manager_group" "$workspace_root"
 run_cmd chmod -R u=rwX,g=rwX,o= "$workspace_root"
 run_cmd find "$workspace_root" -type d -exec chmod g+s {} +
