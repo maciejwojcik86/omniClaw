@@ -9,6 +9,7 @@ OmniClaw builds a kernel that orchestrates isolated Linux-user agents using form
   - Linux user creation
   - Workspace scaffold creation
   - Ownership/group permission policy
+- Use `$provision-agent-workspace` as the default unified provisioning skill (workflow + setup + audit).
 - Every proven implementation pattern MUST be captured as a reusable skill under `.codex/skills/<skill-name>/SKILL.md`.
 - Skills may reference helper scripts under `scripts/` and may call privileged kernel endpoints instead of running privileged commands directly when needed.
 - Once a modular step is validated, keep the skill updated in the same change so the lesson is retained for future sessions.

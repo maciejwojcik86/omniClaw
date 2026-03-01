@@ -250,3 +250,4 @@ Acceptance criteria:
 - 2026-03-01: Merged former `docs/master-task-list.md` into `docs/plan.md` to keep one canonical planning source.
 - 2026-03-01: Adopted mandatory skill-first modular provisioning workflow; added project-local skills and helper scripts for user creation, workspace scaffold, and permission policy.
 - 2026-03-01: Added privileged provisioning helper allowlist pattern and system adapter helper integration for endpoint-driven host actions with SQLite node tracking.
+- 2026-03-01: Consolidated provisioning skills into `.codex/skills/provision-agent-workspace` and added `scripts/provisioning/list_agents_permissions.py` audit report script.

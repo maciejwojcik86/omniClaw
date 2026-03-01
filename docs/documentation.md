@@ -84,6 +84,13 @@ Each step has:
 - a helper script in `scripts/provisioning/`
 - dry-run default behavior before apply mode
 
+Consolidated provisioning skill:
+- `.codex/skills/provision-agent-workspace/`
+  - `SKILL.md`: unified entrypoint
+  - `SETUP.md`: installation/privileged setup
+  - `WORKFLOW.md`: combined local + endpoint flow
+  - `scripts/`: wrapped commands and workflow runner
+
 ## Privileged Provisioning Path
 
 Recommended production-style flow:
@@ -98,6 +105,12 @@ Runtime env vars:
 - `OMNICLAW_ALLOW_PRIVILEGED_PROVISIONING=true`
 - `OMNICLAW_PROVISIONING_HELPER_PATH=/abs/path/scripts/provisioning/privileged_provisioning_helper.sh`
 - `OMNICLAW_PROVISIONING_HELPER_USE_SUDO=true`
+
+Permissions/audit script:
+- `scripts/provisioning/list_agents_permissions.py`
+  - reads AGENT rows from SQLite
+  - resolves Linux users by uid
+  - prints home/workspace owner:group:mode summary
 
 ## Data Model Overview (high level)
 
