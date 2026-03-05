@@ -11,12 +11,23 @@ from typing import Iterable
 
 
 @dataclass
-class AgentRow:
+class NodeRow:
     node_id: str
+    node_type: str
     name: str
     linux_uid: int | None
+    linux_username: str | None
+    linux_password: str | None
+    workspace_root: str | None
+    primary_model: str | None
+    gateway_running: int
+    gateway_pid: int | None
+    gateway_started_at: str | None
+    gateway_stopped_at: str | None
     status: str
     autonomy_level: int
+    manager_name: str | None
+    subordinate_count: int
 
 
 @dataclass
@@ -28,28 +39,51 @@ class FsInfo:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="List agents and workspace permissions using SQLite node data.")
+    parser = argparse.ArgumentParser(description="List nodes and workspace permissions using SQLite node data.")
     parser.add_argument(
         "--database",
-        default="omniclaw.db",
-        help="Path to SQLite database file (default: omniclaw.db)",
+        default="workspace/omniclaw.db",
+        help="Path to SQLite database file (default: workspace/omniclaw.db)",
     )
     return parser.parse_args()
 
 
-def load_agents(db_path: Path) -> list[AgentRow]:
+def load_nodes(db_path: Path) -> list[NodeRow]:
     conn = sqlite3.connect(str(db_path))
     try:
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT id, name, linux_uid, status, autonomy_level
-            FROM nodes
-            WHERE type = 'AGENT'
-            ORDER BY created_at ASC
+            SELECT
+              n.id,
+              n.type,
+              n.name,
+              n.linux_uid,
+              n.linux_username,
+              n.linux_password,
+              n.workspace_root,
+              n.primary_model,
+              n.gateway_running,
+              n.gateway_pid,
+              n.gateway_started_at,
+              n.gateway_stopped_at,
+              n.status,
+              n.autonomy_level,
+              p.name AS manager_name,
+              COALESCE(sc.subordinate_count, 0) AS subordinate_count
+            FROM nodes n
+            LEFT JOIN hierarchy h ON h.child_node_id = n.id
+            LEFT JOIN nodes p ON p.id = h.parent_node_id
+            LEFT JOIN (
+              SELECT parent_node_id, COUNT(*) AS subordinate_count
+              FROM hierarchy
+              GROUP BY parent_node_id
+            ) sc ON sc.parent_node_id = n.id
+            WHERE n.type IN ('AGENT', 'HUMAN')
+            ORDER BY n.created_at ASC
             """
         )
-        rows = [AgentRow(*row) for row in cur.fetchall()]
+        rows = [NodeRow(*row) for row in cur.fetchall()]
         return rows
     finally:
         conn.close()
@@ -102,67 +136,48 @@ def main() -> int:
         print(f"Database not found: {db_path}")
         return 1
 
-    agents = load_agents(db_path)
-    if not agents:
-        print(f"No AGENT rows found in {db_path}")
+    nodes = load_nodes(db_path)
+    if not nodes:
+        print(f"No HUMAN/AGENT rows found in {db_path}")
         return 0
 
     table_rows: list[list[str]] = [
         [
             "node_name",
+            "node_type",
             "status",
             "autonomy",
-            "uid",
-            "linux_user",
-            "home_owner:group/mode",
-            "nullclaw_owner:group/mode",
-            "config_owner:group/mode",
+            "db_linux_user",
+            "manager",
+            "subordinates",
+            "db_workspace",
+            "model",
+            "gateway",
+            "gateway_pid",
+            "password",
             "workspace_owner:group/mode",
         ]
     ]
 
-    for agent in agents:
-        username = resolve_username(agent.linux_uid)
-        home_path = Path("<unknown>")
-        nullclaw_path = Path("<unknown>")
-        config_path = Path("<unknown>")
-        workspace_path = Path("<unknown>")
-        if username and not username.startswith("<"):
-            try:
-                home_path = Path(pwd.getpwnam(username).pw_dir)
-                nullclaw_path = home_path / ".nullclaw"
-                config_path = nullclaw_path / "config.json"
-                workspace_path = nullclaw_path / "workspace"
-            except KeyError:
-                pass
-
-        home_info = stat_info(home_path) if str(home_path) != "<unknown>" else FsInfo("<unknown>", "<unknown>", "<unknown>", "<unknown>")
-        nullclaw_info = (
-            stat_info(nullclaw_path)
-            if str(nullclaw_path) != "<unknown>"
-            else FsInfo("<unknown>", "<unknown>", "<unknown>", "<unknown>")
-        )
-        config_info = (
-            stat_info(config_path)
-            if str(config_path) != "<unknown>"
-            else FsInfo("<unknown>", "<unknown>", "<unknown>", "<unknown>")
-        )
-        workspace_info = (
-            stat_info(workspace_path)
-            if str(workspace_path) != "<unknown>"
-            else FsInfo("<unknown>", "<unknown>", "<unknown>", "<unknown>")
-        )
+    for node in nodes:
+        workspace_info = FsInfo("<unknown>", "<unknown>", "<unknown>", "<unknown>")
+        if node.workspace_root:
+            workspace_info = stat_info(Path(node.workspace_root))
 
         table_rows.append(
             [
-                agent.name,
-                agent.status,
-                str(agent.autonomy_level),
-                str(agent.linux_uid) if agent.linux_uid is not None else "<null>",
-                username,
-                f"{home_info.owner}:{home_info.group}/{home_info.mode}",
-                f"{nullclaw_info.owner}:{nullclaw_info.group}/{nullclaw_info.mode}",
-                f"{config_info.owner}:{config_info.group}/{config_info.mode}",
+                node.name,
+                node.node_type,
+                node.status,
+                str(node.autonomy_level),
+                node.linux_username or resolve_username(node.linux_uid),
+                node.manager_name or "<none>",
+                str(node.subordinate_count),
+                node.workspace_root or "<null>",
+                node.primary_model or "<null>",
+                "running" if bool(node.gateway_running) else "stopped",
+                str(node.gateway_pid) if node.gateway_pid is not None else "<null>",
+                "set" if node.linux_password else "<null>",
                 f"{workspace_info.owner}:{workspace_info.group}/{workspace_info.mode}",
             ]
         )

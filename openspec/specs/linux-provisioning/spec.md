@@ -15,7 +15,7 @@ Provisioning SHALL create the required workspace tree for a new agent.
 
 #### Scenario: New agent is provisioned
 - **WHEN** the provisioning workflow completes
-- **THEN** required folders/files exist under the agent workspace (`inbox`, `outbox`, `notes`, `journal`, `drafts`, `skills`, templates)
+- **THEN** required folders/files exist under the agent workspace (`inbox`, `outbox/pending`, `outbox/drafts`, `outbox/archive`, `outbox/dead-letter`, `notes`, `drafts`, `skills`, templates)
 
 ### Requirement: Ownership and Group Rules SHALL Be Applied
 Provisioning SHALL apply ownership and group permissions to support manager oversight of subordinate workspaces.

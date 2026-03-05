@@ -2,11 +2,12 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import uuid4
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from omniclaw.db.base import Base
 from omniclaw.db.enums import (
+    FormTypeLifecycle,
     FormStatus,
     FormType,
     NodeStatus,
@@ -30,6 +31,17 @@ class Node(Base):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     linux_uid: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    linux_username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    linux_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    workspace_root: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    nullclaw_config_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    primary_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    gateway_running: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    gateway_pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    gateway_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    gateway_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    gateway_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    gateway_stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     autonomy_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[NodeStatus] = mapped_column(
         Enum(NodeStatus, name="node_status", native_enum=False, validate_strings=True),
@@ -43,7 +55,10 @@ class Node(Base):
 
 class Hierarchy(Base):
     __tablename__ = "hierarchy"
-    __table_args__ = (UniqueConstraint("parent_node_id", "child_node_id", name="uq_hierarchy_parent_child"),)
+    __table_args__ = (
+        UniqueConstraint("parent_node_id", "child_node_id", name="uq_hierarchy_parent_child"),
+        UniqueConstraint("child_node_id", name="uq_hierarchy_child_manager"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
     parent_node_id: Mapped[str] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False)
@@ -81,23 +96,85 @@ class FormLedger(Base):
     __tablename__ = "forms_ledger"
 
     form_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    type: Mapped[FormType] = mapped_column(
-        Enum(FormType, name="form_type", native_enum=False, validate_strings=True), nullable=False
-    )
-    current_status: Mapped[FormStatus] = mapped_column(
-        Enum(FormStatus, name="form_status", native_enum=False, validate_strings=True),
-        nullable=False,
-        default=FormStatus.DRAFT,
-    )
+    type: Mapped[str] = mapped_column(String(128), nullable=False, default="message")
+    form_type_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    form_type_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    current_status: Mapped[str] = mapped_column(String(64), nullable=False, default=FormStatus.DRAFT.value)
     current_holder_node: Mapped[str | None] = mapped_column(
         ForeignKey("nodes.id", ondelete="SET NULL"), nullable=True
     )
+    message_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sender_node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("nodes.id", ondelete="SET NULL"), nullable=True
+    )
+    target_node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("nodes.id", ondelete="SET NULL"), nullable=True
+    )
+    subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    source_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    delivery_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    archive_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    dead_letter_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    routed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dead_lettered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    __mapper_args__ = {"version_id_col": version}
     history_log: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class FormTypeDefinition(Base):
+    __tablename__ = "form_types"
+    __table_args__ = (UniqueConstraint("type_key", "version", name="uq_form_types_type_key_version"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    type_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    version: Mapped[str] = mapped_column(String(32), nullable=False)
+    lifecycle_state: Mapped[FormTypeLifecycle] = mapped_column(
+        Enum(FormTypeLifecycle, name="form_type_lifecycle", native_enum=False, validate_strings=True),
+        nullable=False,
+        default=FormTypeLifecycle.DRAFT,
+    )
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    workflow_graph: Mapped[str] = mapped_column(Text, nullable=False)
+    stage_metadata: Mapped[str] = mapped_column(Text, nullable=False)
+    validation_errors: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class FormTransitionEvent(Base):
+    __tablename__ = "form_transition_events"
+    __table_args__ = (UniqueConstraint("form_id", "sequence", name="uq_form_transition_events_form_sequence"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    form_id: Mapped[str] = mapped_column(ForeignKey("forms_ledger.form_id", ondelete="CASCADE"), nullable=False)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    from_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    to_status: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    actor_node_id: Mapped[str | None] = mapped_column(ForeignKey("nodes.id", ondelete="SET NULL"), nullable=True)
+    previous_holder_node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("nodes.id", ondelete="SET NULL"), nullable=True
+    )
+    new_holder_node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("nodes.id", ondelete="SET NULL"), nullable=True
+    )
+    payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
 
@@ -122,4 +199,3 @@ class MasterSkill(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-

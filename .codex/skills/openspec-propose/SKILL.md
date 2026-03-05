@@ -98,6 +98,10 @@ After completing all artifacts, summarize:
 - The schema defines what each artifact should contain - follow it
 - Read dependency artifacts for context before creating new ones
 - Use `template` as the structure for your output file - fill in its sections
+- When authoring `tasks.md`, include an explicit final task for skill closure:
+  - review reusable lessons from implementation
+  - update existing skills or create new skills in `.codex/skills/`
+  - add/refresh helper scripts and command cheatsheet references where needed
 - **IMPORTANT**: `context` and `rules` are constraints for YOU, not content for the file
   - Do NOT copy `<context>`, `<rules>`, `<project_context>` blocks into the artifact
   - These guide what you write, but should never appear in the output

@@ -25,9 +25,9 @@ Checkpoint sweep:
 | M01 | `m01-kernel-service-skeleton` | Foundation | completed | M00 | engineering | FastAPI app boots; `/healthz` returns 200 |
 | M02 | `m02-canonical-state-schema` | Foundation | completed | M01 | engineering | Core tables + enums + migration + insert test |
 | M03 | `m03-linux-provisioning` | Foundation | completed | M02 | engineering | Provisioning adapters + workspace permissions verified |
-| M04 | `m04-agent-runtime-bootstrap` | Foundation | in_progress | M03 | engineering | Restricted Nullclaw runtime writes to `/drafts` |
-| M05 | `m05-file-ipc-router` | Communication Bus | planned | M04 | engineering | Outbox->Inbox route in <=5s with permission checks |
-| M06 | `m06-forms-ledger-state-machine` | Communication Bus | planned | M05 | engineering | Form IDs + state transitions + holder/history tracking |
+| M04 | `m04-agent-runtime-bootstrap` | Foundation | completed | M03 | engineering | Gateway on/off control + runtime metadata + DB runtime-state tracking |
+| M05 | `m05-file-ipc-router` | Communication Bus | completed | M04 | engineering | Outbox->Inbox route in <=5s with deterministic validation + target resolution checks |
+| M06 | `m06-forms-ledger-state-machine` | Communication Bus | completed | M05 | engineering | Form registry + graph decisions + deterministic holder semantics + append-only history |
 | M07 | `m07-approval-action-executors` | Workflow Automation | planned | M06 | engineering | Approved SPAWN/UPDATE_TEMPLATE trigger side effects |
 | M08 | `m08-context-injector` | Context Injection | planned | M07 | engineering | Template vars render to read-only AGENTS within 5s |
 | M09 | `m09-litellm-key-management` | Budgeting | planned | M08 | engineering | Virtual keys + cost ingestion persisted per node |
@@ -45,10 +45,10 @@ This compact checklist complements the detailed milestone plan above and is kept
 ### Phase 1: Foundation (Database and Physical OS)
 - [x] Step 1: Core database schema.
 - [x] Step 2: Linux user and workspace provisioning.
-- [ ] Step 3: Nullclaw bootstrap and manual restricted execution.
+- [x] Step 3: Nullclaw bootstrap and manual restricted execution.
 
 ### Phase 2: Communication and Context (IPC and Templating)
-- [ ] Step 4: Formal form daemon (P2P messaging + frontmatter parsing + routing).
+- [x] Step 4: Formal form daemon (P2P messaging + frontmatter parsing + routing).
 - [ ] Step 5: Context injector daemon (persona template -> rendered AGENTS).
 
 ### Phase 3: Financial Control (LiteLLM and Waterfall Budget)
@@ -91,30 +91,56 @@ Verification:
 ### M04 - Agent runtime bootstrap (`m04-agent-runtime-bootstrap`)
 Scope:
 - Runtime wrapper for launching Nullclaw under restricted user.
-- Initial template/TODO seed logic.
-- Run metadata capture.
+- Runtime gateway control actions (`gateway_start`, `gateway_stop`, `gateway_status`, `list_agents`).
+- Use existing native Nullclaw workspace context files (no M04 prompt seed generation).
+- Run metadata capture under drafts output boundary.
+- Canonical DB runtime-state tracking on `nodes` (`gateway_running`, pid, host/port, start/stop timestamps).
+- Register kernel-running Linux user as HUMAN node with workspace inside repo (`workspace/<user>`).
+- Enforce AGENT line manager requirement (manager can be HUMAN or AGENT) and support linking manager for existing AGENT rows.
+- Delegated operator SOP via runtime-control skill (`.codex/skills/runtime-gateway-control`).
 
 Acceptance criteria:
 - Restricted runtime produces artifact in worker drafts area.
+- Gateway enable/disable updates canonical runtime state in DB.
+- Operators can control runtime through endpoint-driven scripts/skill.
+- HUMAN supervisor node participates in canonical node/hierarchy model with repo-local workspace.
+- Baseline hierarchy exists: HUMAN supervisor (`macos`) manages `Director_01`.
 
 Verification:
-- runtime integration test + smoke command.
+- `uv run pytest -q`
+- `openspec validate --type change m04-agent-runtime-bootstrap --strict`
+- `scripts/runtime/smoke_gateway_control.sh` (dry-run or apply depending on environment).
 
 ### M05 - File IPC router (`m05-file-ipc-router`)
 Scope:
-- Daemon scans pending outboxes and routes markdown forms/messages.
-- Permission checks, sent/dead-letter behavior.
+- Router scans queued outbox messages and routes markdown `MESSAGE` forms.
+- Minimal frontmatter contract (`type`, `sender`, `target`, `subject`).
+- Sender identity derived from workspace ownership; target routing allowed for any registered node with valid workspace.
+- Deterministic archive/undelivered behavior with canonical DB lifecycle metadata.
+- Developer + agent-facing SOP skills for extensibility and message authoring/submission.
 
 Acceptance criteria:
 - A->B route succeeds within target window in integration test.
 
+Verification:
+- `uv run pytest -q`
+- `openspec validate --type change m05-file-ipc-router --strict`
+
 ### M06 - Forms ledger state machine (`m06-forms-ledger-state-machine`)
 Scope:
-- Form ID generation and transition enforcement.
-- Holder tracking + append-only history log updates.
+- Form-type registry with versioned lifecycle (`DRAFT`, `VALIDATED`, `ACTIVE`, `DEPRECATED`).
+- Graph-driven status decisions with decision forks and next-holder resolution.
+- Deterministic form ID generation and collision-safe persistence.
+- Single-holder invariant enforcement per form snapshot.
+- Append-only decision events for lifecycle history.
+- Form-admin control/tooling for create/update/validate/activate/deprecate workflows.
+- Stage-level skill references in active form definitions (templates live with skills).
 
 Acceptance criteria:
-- SUBMITTED requests are tracked with correct holder and history.
+- Custom form types can be registered and activated without schema changes.
+- Valid decisions update snapshot + holder + append-only event history atomically.
+- Invalid decisions are rejected with no partial writes.
+- MESSAGE lifecycle persistence is delegated to the shared state-machine path.
 
 ### M07 - Approval action executors (`m07-approval-action-executors`)
 Scope:
@@ -191,11 +217,11 @@ Acceptance criteria:
 - Daemons handle periodic/continuous workloads (routing, rendering, budget sync, deployment).
 
 ### 3) Filesystem contract
-- Agent workspaces provide inbox/outbox/notes/journal/drafts/skills boundaries.
+- Agent workspaces provide inbox/outbox/notes/drafts/skills boundaries.
 - Router and runtime act only within allowed directories.
 
 ### 4) Deterministic workflows
-- Stable form IDs, explicit transition rules, append-only history entries.
+- Stable form IDs, explicit decision rules, append-only history entries.
 - Deterministic rendering of AGENTS templates from live data.
 
 ### 5) Budget governance pipeline
@@ -250,8 +276,40 @@ Acceptance criteria:
 - 2026-03-01: Merged former `docs/master-task-list.md` into `docs/plan.md` to keep one canonical planning source.
 - 2026-03-01: Adopted mandatory skill-first modular provisioning workflow; added project-local skills and helper scripts for user creation, workspace scaffold, and permission policy.
 - 2026-03-01: Added privileged provisioning helper allowlist pattern and system adapter helper integration for endpoint-driven host actions with SQLite node tracking.
-- 2026-03-01: Consolidated provisioning skills into `.codex/skills/provision-agent-workspace` and added `scripts/provisioning/list_agents_permissions.py` audit report script.
+- 2026-03-01: Consolidated provisioning skills into `.codex/skills/deploy-new-claw-agent` and added `scripts/provisioning/list_agents_permissions.py` audit report script.
 - 2026-03-01: Verified real system provisioning flow end-to-end (Linux user `agent_director_01`, workspace scaffold, permissions, and SQLite node tracking) via `/v1/provisioning/actions`.
 - 2026-03-01: Archived OpenSpec change `m03-linux-provisioning` as `2026-03-01-m03-linux-provisioning`; M03 marked complete.
 - 2026-03-01: Created active change `m04-agent-runtime-bootstrap` and authored proposal/spec/design/tasks with launch strategy options and pending Nullclaw command-contract inputs.
 - 2026-03-01: Aligned M04 and provisioning workflow paths with Nullclaw defaults: config at `~/.nullclaw/config.json` and workspace at `~/.nullclaw/workspace`.
+- 2026-03-01: Added Alembic revision `20260301_0002` to track agent runtime metadata in `nodes` (`linux_username`, `linux_password_hash`, workspace root, config path, and primary model) and added `.codex/skills/alembic-migration-ops`.
+- 2026-03-01: Added Alembic revision `20260301_0003` to rename `linux_password_hash` to `linux_password` (plaintext reference) and enforce one line manager per child node (`uq_hierarchy_child_manager`).
+- 2026-03-01: Updated deploy workflow for shared Nullclaw binaries: one root-managed install under `/opt/omniclaw` plus per-user symlink linking in `~/.local/bin/nullclaw`.
+- 2026-03-01: Added troubleshooting SOPs to deploy/runtime skills and introduced `scripts/provisioning/sync_nullclaw_auth.sh` to resolve `AllProvidersFailed` caused by missing per-user auth context.
+- 2026-03-03: Refined M04 scope to remove prompt-seed creation and rely on native Nullclaw context files (`AGENTS.md`, `SOUL.md`, `USER.md`, etc.); deferred formal prompt-definition/onboarding-skill work to later milestone backlog.
+- 2026-03-03: Implemented M04 runtime control surface (`/v1/runtime/actions`) with gateway start/stop/status/list, metadata capture under `drafts/runtime/runs`, Alembic revision `20260303_0004` for node gateway-state fields, smoke scripts under `scripts/runtime/`, and new delegated runtime SOP skill `.codex/skills/runtime-gateway-control`.
+- 2026-03-03: Extended M04 provisioning baseline with `register_human` and `set_line_manager` actions; enforced manager requirement on `provision_agent` (manager node can be HUMAN or AGENT); added one-time HUMAN supervisor bootstrap (`workspace/macos`) and linked `Macos_Supervisor` -> `Director_01` in SQLite hierarchy.
+- 2026-03-03: Archived OpenSpec change `m04-agent-runtime-bootstrap` as `2026-03-03-m04-agent-runtime-bootstrap`; M04 marked complete and ready to hand off to M05 planning.
+- 2026-03-03: Started M05 change `m05-file-ipc-router`; authored proposal/spec/design/tasks, validated with `openspec validate --type change m05-file-ipc-router --strict`, and set initial contract for minimal `MESSAGE` frontmatter + canonical DB lifecycle tracking + developer/agent message workflow skills.
+- 2026-03-03: Implemented M05 IPC routing (`/v1/ipc/actions`), added `forms_ledger` message metadata migration (`20260303_0005`), added integration tests for success/invalid routes, published `ipc-router-development` and `send_message` skills, and archived change as `2026-03-03-m05-file-ipc-router`.
+- 2026-03-03: Completed real-host M05 workflow validation: HUMAN `Macos_Supervisor` -> AGENT `Director_01` message delivery via `outbox/pending`, Director reply routed back to HUMAN inbox, and lifecycle evidence verified in filesystem + `forms_ledger`.
+- 2026-03-03: Closed instruction drift causing agent replies to land in `drafts/` by updating provisioning AGENTS template to require MESSAGE drafts in `outbox/drafts/` and submit in `outbox/pending/`.
+- 2026-03-03: Created active change `m06-forms-ledger-state-machine`, authored proposal/spec/design/tasks for generic form registry + graph lifecycle + admin tooling + stage skill linkage, and validated with `openspec validate --type change m06-forms-ledger-state-machine --strict`.
+- 2026-03-03: Implemented M06 core: added `/v1/forms/actions`, `src/omniclaw/forms` state-machine service, `form_types` + `form_transition_events` schema/migration (`20260303_0006`), deterministic form ID collision policy, snake_case form type keys (built-in `message`), IPC lifecycle integration through forms engine, helper tooling under `scripts/forms/`, templates under `templates/forms/`, and new skills for form-type authoring/stage execution/template authoring. Verified with `uv run pytest -q` and strict OpenSpec validation.
+- 2026-03-03: Refined M06 holder/routing semantics: MESSAGE routing now allows any registered target node, built-in `message` lifecycle uses `WAITING_TO_BE_READ -> ARCHIVED` via explicit read acknowledgement, and workflow edges now support deterministic named-holder (`static_node_name`) plus terminal no-holder (`none`) decisions.
+- 2026-03-03: Removed runtime graph overwrite for `message` form type: IPC now resolves lifecycle behavior from active `form_types` definition/version, bootstrap-seeding defaults only when no `message` definition exists; added regression test proving custom active `message` workflow drives status decisions.
+- 2026-03-03: Simplified message transport failure handling: removed dead-letter routing mutations from IPC scan path; undelivered files remain in `outbox/pending` with explicit failure reason in scan output while canonical lifecycle DB writes occur only for successful deliveries.
+- 2026-03-03: Added configurable deployment-approval form example `nullclaw_agent_deployment_request_form` (requester draft -> human review -> reject loop/resubmit or terminal approval), shipped requester/reviewer stage skills with templates, added canonical form definitions under `forms/`, and added integration test coverage for submit/reject/resubmit/approve holder decisions.
+- 2026-03-03: Added operator smoke runner `scripts/forms/smoke_nullclaw_agent_deployment_request.sh` to execute end-to-end deployment-request lifecycle (upsert/validate/activate/create/submit/reject/resubmit/approve) in dry-run or apply mode.
+- 2026-03-03: Executed live apply-mode deployment-request smoke against local kernel (`Director_01` requester, `Macos_Supervisor` reviewer); confirmed terminal form snapshot `APPROVED_FOR_DEPLOYMENT` with `current_holder_node=NULL` and 5 append-only decision events in `form_transition_events`.
+- 2026-03-03: Adopted node-centric workflow schema for forms (`start_node`, `end_node`, per-node `status`/`stage_skill_ref`/`holder`, decision edges), kept legacy graph compatibility for existing records, moved approved form definition payloads to repository-root `forms/`, and removed stale `scripts/forms/examples/` JSON files.
+- 2026-03-04: Refocused M06 on form-centric IPC routing (`scan_forms` primary, `scan_messages` alias), where `message` is a normal form type. IPC now routes by `workflow_graph.stages`, supports dynamic targets (`{{initiator}}`, `{{any}}`, `{{var}}`), writes backup copies to `workspace/form_archive/`, and distributes required stage skills from `workspace/forms/<form_type>/skills/<required_skill>/`.
+- 2026-03-04: Shifted canonical workflow artifacts to `workspace/forms/` packages (removed legacy root `templates/` artifacts), added master authoring skill under `workspace/master_skills/form_workflow_authoring/`, added workflow publisher/smoke scripts in `scripts/forms/`, and added canonical workspace form packages for `message` and `deploy_new_agent`.
+- 2026-03-04: Moved default SQLite path from repo root to `workspace/omniclaw.db`; updated runtime config, Alembic default URL, and operator scripts/skills to use the workspace DB location; verified DB remains at Alembic head (`20260303_0007`) with `form_types` present.
+- 2026-03-04: Simplified canonical `message` workflow to terminal `WAITING_TO_BE_READ` and added `scripts/forms/sync_form_types_from_workspace.py` to make `form_types` definitions authoritative from `workspace/forms`; synced DB and pruned stale definitions.
+- 2026-03-04: Added kernel lifespan IPC auto-scan loop (default enabled, 5s interval) that executes the same routing path as `scan_forms`; confirmed live routing of `workspace/macos/outbox/pending/2026-03-04-macos-director-routing-smoke.md` to `Director_01`.
+- 2026-03-04: Updated `message` read-stage workflow back to explicit `WAITING_TO_BE_READ -> ARCHIVED` acknowledge decision and replaced read-stage SOP with single script tool `acknowledge_and_archive_message.py` (endpoint call + frontmatter stage update + unread->read move + master archive copy). Hardened `sync_form_types_from_workspace.py` prune logic to preserve versions still referenced by `forms_ledger`.
+- 2026-03-05: Archived change `m06-forms-ledger-state-machine` as `2026-03-05-m06-forms-ledger-state-machine` (spec sync was skipped during archive due delta header mismatch in upstream OpenSpec auto-sync).
+- 2026-03-05: Implemented hardening change `hardening-runtime-ipc-core`: strict runtime host validation, safer gateway command rendering, bounded IPC scan traversal with event-loop offload, `forms_ledger.version` optimistic lock migration (`20260305_0008`), deterministic transition conflict mapping, and startup migration-head enforcement (no runtime `create_all` path). Regression suite updated and passing (`46 passed`).
+- 2026-03-05: Archived change `hardening-runtime-ipc-core` as `2026-03-05-hardening-runtime-ipc-core`; synced new/updated specs including `runtime-ipc-hardening`.
+- 2026-03-05: Implemented change `ipc-invalid-feedback-and-dedupe`: undelivered forms now dead-letter once, kernel emits structured feedback artifacts (`target` first with sender fallback), IPC response includes `dead_letter_path`/`feedback_path`, added replay script `scripts/ipc/requeue_dead_letter.sh`, and deduped node resolver + manager-link repository logic.
+- 2026-03-05: Archived change `ipc-invalid-feedback-and-dedupe` as `2026-03-05-ipc-invalid-feedback-and-dedupe`; synced specs `ipc-invalid-feedback-routing`, `file-ipc-router`, and `canonical-state-schema`.

@@ -1,0 +1,29 @@
+{
+  "form_type": "example_form",
+  "version": "1.0.0",
+  "description": "Describe process objective, actors, and closure conditions.",
+  "start_stage": "DRAFT",
+  "end_stage": "ARCHIVED",
+  "dispatch_decision": "submit",
+  "stages": {
+    "DRAFT": {
+      "target": "{{initiator}}",
+      "required_skill": "draft_example_form",
+      "transitions": {
+        "submit": "REVIEW"
+      }
+    },
+    "REVIEW": {
+      "target": "Reviewer_Node_Name",
+      "required_skill": "review_example_form",
+      "transitions": {
+        "approve": "ARCHIVED",
+        "return_to_initiator": "DRAFT"
+      }
+    },
+    "ARCHIVED": {
+      "target": null,
+      "is_terminal": true
+    }
+  }
+}

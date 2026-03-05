@@ -71,6 +71,10 @@ Implement tasks from an OpenSpec change.
    - Make the code changes required
    - Keep changes minimal and focused
    - Mark task complete in the tasks file: `- [ ]` → `- [x]`
+   - Run Skill Delta Review for the completed task:
+     - Update an existing skill if it already covers the workflow
+     - Or create a new focused skill in `.codex/skills/` if this is a new reusable SOP
+     - Capture reusable commands/scripts so other agents can replay the step
    - Continue to next task
 
    **Pause if:**
@@ -84,8 +88,16 @@ Implement tasks from an OpenSpec change.
    Display:
    - Tasks completed this session
    - Overall progress: "N/M tasks complete"
+   - Skill capture status (which skills were updated/created this session)
    - If all done: suggest archive
    - If paused: explain why and wait for guidance
+
+8. **Before declaring implementation complete, run final OpenSpec Skill Review Gate**
+
+   - Review all tasks completed in this session/change for reusable workflows
+   - Confirm each reusable workflow is represented by an updated or newly created skill
+   - Ensure each touched skill includes: scope, inputs, execution steps, verification commands, fallback
+   - If this gate is incomplete, continue skill updates before recommending archive
 
 **Output During Implementation**
 
@@ -145,6 +157,8 @@ What would you like to do?
 - If implementation reveals issues, pause and suggest artifact updates
 - Keep code changes minimal and scoped to each task
 - Update task checkbox immediately after completing each task
+- Skill Delta Review is mandatory after each completed task
+- Final Skill Review Gate is mandatory before archive recommendation
 - Pause on errors, blockers, or unclear requirements - don't guess
 - Use contextFiles from CLI output, don't assume specific file names
 

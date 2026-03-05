@@ -1,157 +1,108 @@
 # OmniClaw Documentation
 
-This is the living operator/developer documentation for OmniClaw.
+Living operator/developer documentation for current implementation.
 
-## What OmniClaw Is
+## Delivery Status
+- M00-M05: complete
+- M06: complete and archived (`2026-03-05-m06-forms-ledger-state-machine`)
+- Hardening change: complete and archived (`2026-03-05-hardening-runtime-ipc-core`)
+- IPC invalid-feedback change: complete and archived (`2026-03-05-ipc-invalid-feedback-and-dedupe`)
 
-OmniClaw is a kernel that orchestrates autonomous coding agents as isolated Linux users.
-It combines:
-- Formal Markdown/YAML form-based communication
-- Canonical relational state tracking
-- Budget governance and quota controls
-- Managed skill lifecycle and deployment
+## Runtime Basics
+- Run tests: `uv run pytest -q`
+- Start API: `uv run python main.py`
+- Health: `GET /healthz`
+- Default SQLite URL: `sqlite:///./workspace/omniclaw.db`
+- Startup contract: database MUST be at Alembic head; run `uv run alembic upgrade head` before boot.
+- IPC auto-scan while kernel is running:
+  - enabled by default: `OMNICLAW_IPC_ROUTER_AUTO_SCAN_ENABLED=true`
+  - interval seconds: `OMNICLAW_IPC_ROUTER_SCAN_INTERVAL_SECONDS` (default `5`)
+- Runtime gateway host input is strictly validated (valid IP/hostname only).
 
-## Current Delivery Status
+## Core Endpoints
+- `POST /v1/ipc/actions`
+  - actions: `scan_forms` (primary), `scan_messages` (compatibility alias)
+- `POST /v1/forms/actions`
+  - `upsert_form_type`, `validate_form_type`, `activate_form_type`, `deprecate_form_type`, `delete_form_type`, `list_form_types`, `create_form`, `transition_form`, `acknowledge_message_read`
 
-- M00: complete (governance bootstrap)
-- M01: complete (kernel service skeleton)
-- M02: complete (canonical state schema)
-- M03: complete and archived (`2026-03-01-m03-linux-provisioning`)
-- M04: in progress (`m04-agent-runtime-bootstrap`)
+## Form-Centric Routing Model (M06)
+- IPC routes markdown files from `outbox/pending` as **generic forms**.
+- Required frontmatter (runtime):
+  - `form_type`
+  - `stage`
+  - `decision`
+  - optional `target` (for dynamic target stages)
+- Legacy compatibility:
+  - `type: MESSAGE` maps to `form_type: message`
+  - `scan_messages` still accepted
 
-## Local Setup
+Routing behavior:
+- Kernel loads active form definition from `form_types`.
+- Decision is validated against `workflow_graph.stages`.
+- Kernel resolves next holder and routes file:
+  - sender archive copy: `<sender>/outbox/archive/`
+  - holder delivery copy: `<holder>/inbox/unread/` (when holder exists)
+  - repo backup copy: `workspace/form_archive/<form_type>/<form_id>/`
+- On undelivered validation/workflow failures:
+  - source file is moved to sender `outbox/dead-letter/`
+  - kernel writes a structured feedback artifact to recipient inbox (`target` first, sender fallback)
+  - scan response includes `dead_letter_path` and `feedback_path`
+- Forms ledger snapshot and append-only decision events are updated atomically per decision call.
+- Form snapshots use optimistic lock versioning; stale transitions return conflict outcome.
+- While kernel is running, background auto-scan periodically performs the same scan path as `POST /v1/ipc/actions` with `action=scan_forms` via non-blocking thread offload.
 
-Prerequisites:
-- Python 3.11+
-- `uv` installed
+## Target Resolution
+Supported stage targets:
+- specific node id
+- specific node name
+- `{{initiator}}`
+- `{{any}}` (requires frontmatter `target` / `target_node_id`)
+- `{{var}}` (requires matching frontmatter field)
+- `null`/`none` for terminal no-holder stages
 
-Install and run checks:
-- `uv run pytest -q`
-- `openspec validate --all --strict`
+## Skill Validation and Distribution
+- Stage definitions include `required_skill`.
+- Validation requires master skill file:
+  - `workspace/forms/<form_type>/skills/<required_skill>/SKILL.md`
+- During routing, kernel copies next-stage skill package to recipient workspaces under:
+  - `<workspace>/skills/<required_skill>/`
+- For `{{any}}` stages, distribution includes all active agent workspaces plus the resolved holder node.
 
-Run service (current baseline):
-- `uv run python main.py`
-- Health check: `GET http://localhost:8000/healthz`
+## Workspace Canonical Artifacts
+- `workspace/forms/<form_type>/workflow.json`
+- `workspace/forms/<form_type>/skills/<required_skill>/...`
+- `workspace/master_skills/form_workflow_authoring/SKILL.md`
+- `workspace/form_archive/<form_type>/<form_id>/...`
 
-## OpenSpec Workflow
+Canonical shipped forms:
+- `message`
+- `deploy_new_agent`
 
-Per milestone:
-1. `openspec new change <change-id>`
-2. Author artifacts:
-   - `proposal.md`
-   - `specs/**/*.md`
-   - `design.md`
-   - `tasks.md`
-3. Implement scoped tasks
-4. Validate:
-   - `openspec validate --type change <change-id> --strict`
-5. Archive:
-   - `openspec archive <change-id> -y`
+## Tooling
+- IPC trigger:
+  - `scripts/ipc/trigger_ipc_action.sh --apply --action scan_forms`
+- Dead-letter replay helper:
+  - `scripts/ipc/requeue_dead_letter.sh --apply --workspace-root <workspace_root> --file <dead_letter_file>`
+- Workspace-to-DB form sync (authoritative refresh):
+  - `uv run scripts/forms/sync_form_types_from_workspace.py`
+- Message acknowledge+archive helper (stage-skill tool):
+  - `python workspace/forms/message/skills/read_and_acknowledge_internal_message/scripts/acknowledge_and_archive_message.py --apply --workspace-root <workspace_root> --form-file <form_file>`
+- Forms action helper:
+  - `scripts/forms/trigger_forms_action.sh`
+- Publish workflow from workspace package:
+  - `scripts/forms/upsert_workflow_from_workspace.sh --apply --activate --form-type <form_type>`
+- Workflow smoke publisher:
+  - `scripts/forms/smoke_form_workflows.sh [--apply]`
 
-## Test, Lint, and Typecheck
+## Repo Structure (relevant)
+- `src/omniclaw/forms/`: form type registry + decision engine
+- `src/omniclaw/ipc/`: form IPC scanner/router
+- `scripts/forms/`: form admin/publish/smoke scripts
+- `scripts/ipc/`: ipc trigger + read/ack helper
+- `workspace/forms/`: approved form workflow JSON packages
+- `workspace/forms/<form_type>/skills/`: approved stage skill master copies per form type
+- `workspace/master_skills/`: organization-level master skills
+- `workspace/form_archive/`: routed-form backup trail
 
-Current mandatory verification:
-- `uv run pytest -q`
-- `openspec validate --all --strict`
-
-Planned additions as codebase expands:
-- lint command
-- static typecheck command
-
-## Repo Structure Overview
-
-- `AGENTS.md`: persistent engineering contract and repository map.
-- `docs/`: project and tracking docs (`current-task`, `plan`, PRD, roadmap).
-- `openspec/`: specs and per-change artifacts.
-- `src/omniclaw/`: kernel app, config, logging, DB, and domain modules.
-- `alembic/` and `alembic.ini`: DB migration environment and versions.
-- `tests/`: automated verification suites.
-- `.codex/skills/`: project-local reusable skills.
-- `scripts/provisioning/`: modular provisioning helper scripts (dry-run first).
-- `docs/prompt.md`: long-horizon objective and build prompt for Codex.
-- `docs/plan.md`: long-horizon execution plan, risks, and milestone status.
-- `docs/implement.md`: strict implementation operating instructions.
-- `docs/documentation.md`: this living operator/developer doc.
-
-## Skill-First Provisioning Pattern (M03)
-
-Provisioning is now organized as composable steps instead of one all-in-one script:
-- Linux user creation
-- Workspace scaffold creation
-- Ownership/group permission application
-
-Each step has:
-- a reusable local skill in `.codex/skills/`
-- a helper script in `scripts/provisioning/`
-- dry-run default behavior before apply mode
-
-Consolidated provisioning skill:
-- `.codex/skills/provision-agent-workspace/`
-  - `SKILL.md`: unified entrypoint
-  - `SETUP.md`: installation/privileged setup
-  - `WORKFLOW.md`: combined local + endpoint flow
-  - `scripts/`: wrapped commands and workflow runner
-
-## Privileged Provisioning Path
-
-Recommended production-style flow:
-- Keep FastAPI kernel unprivileged.
-- Enable system provisioning endpoint mode with explicit flags.
-- Route privileged host actions through:
-  - `scripts/provisioning/privileged_provisioning_helper.sh`
-- Allow only that helper in sudoers for the kernel service user.
-
-Runtime env vars:
-- `OMNICLAW_PROVISIONING_MODE=system`
-- `OMNICLAW_ALLOW_PRIVILEGED_PROVISIONING=true`
-- `OMNICLAW_PROVISIONING_HELPER_PATH=/abs/path/scripts/provisioning/privileged_provisioning_helper.sh`
-- `OMNICLAW_PROVISIONING_HELPER_USE_SUDO=true`
-
-Permissions/audit script:
-- `scripts/provisioning/list_agents_permissions.py`
-  - reads AGENT rows from SQLite
-  - resolves Linux users by uid
-  - prints home, `~/.nullclaw`, `~/.nullclaw/config.json`, and `~/.nullclaw/workspace` owner:group:mode summary
-
-Verified real-host result:
-- `/v1/provisioning/actions` in `system` mode created/updated Linux user `agent_director_01`.
-- Workspace exists at `/home/agent_director_01/workspace` with expected structure.
-- Ownership/group policy applied (`agent_director_01:sudo`) and reflected in DB (`nodes` row for `Director_01`).
-
-## Data Model Overview (high level)
-
-Canonical tables currently modeled:
-- `nodes`
-- `hierarchy`
-- `budgets`
-- `forms_ledger`
-- `master_skills`
-
-Key enums currently modeled:
-- `NodeType`, `NodeStatus`
-- `RelationshipType`
-- `FormType`, `FormStatus`
-- `SkillValidationStatus`
-
-## Troubleshooting
-
-1) `openspec validate` fails for a change
-- Ensure required artifacts exist and requirement/scenario headers match schema expectations.
-- Re-run: `openspec validate --type change <change-id> --strict`.
-
-2) Tests fail due missing dependencies
-- Run tests with `uv` so dependencies resolve via project metadata: `uv run pytest -q`.
-
-3) Alembic migration import issues
-- Confirm `alembic.ini` has `prepend_sys_path = .` and `path_separator = os`.
-- Confirm `alembic/env.py` inserts `src/` into `sys.path`.
-
-4) Runtime import issues in root entrypoint
-- `main.py` prepends `src/` to `sys.path`; run from repository root.
-
-## How to Use These Control Documents
-
-- Start with `docs/prompt.md` when redefining or refreshing Codex mission instructions.
-- Use `docs/plan.md` for milestone status, sequencing, risks, and architecture guidance.
-- Use `docs/implement.md` as strict execution policy during implementation runs.
-- Keep `docs/documentation.md` synchronized with actual shipped behavior.
+## Verification
+- Current suite: `46 passed` on `uv run pytest -q`

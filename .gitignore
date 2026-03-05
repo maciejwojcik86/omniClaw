@@ -16,3 +16,6 @@ node_modules/
 var/
 omniclaw.db
 *.db-journal
+workspace/logs/
+workspace/form_archive/
+workspace/*/outbox/archive/

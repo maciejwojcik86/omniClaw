@@ -19,6 +19,8 @@ class RelationshipType(str, Enum):
 
 
 class FormType(str, Enum):
+    # Legacy constants kept for compatibility with earlier milestones.
+    MESSAGE = "MESSAGE"
     BUDGET = "BUDGET"
     SPAWN_AGENT = "SPAWN_AGENT"
     SKILL_DEPLOY = "SKILL_DEPLOY"
@@ -27,6 +29,12 @@ class FormType(str, Enum):
 
 class FormStatus(str, Enum):
     DRAFT = "DRAFT"
+    WAITING_TO_BE_READ = "WAITING_TO_BE_READ"
+    SENT = "SENT"
+    QUEUED = "QUEUED"
+    DELIVERED = "DELIVERED"
+    ARCHIVED = "ARCHIVED"
+    DEAD_LETTER = "DEAD_LETTER"
     SUBMITTED = "SUBMITTED"
     IN_REVIEW = "IN_REVIEW"
     RETURNED = "RETURNED"
@@ -39,3 +47,9 @@ class SkillValidationStatus(str, Enum):
     VALIDATED = "VALIDATED"
     DEPRECATED = "DEPRECATED"
 
+
+class FormTypeLifecycle(str, Enum):
+    DRAFT = "DRAFT"
+    VALIDATED = "VALIDATED"
+    ACTIVE = "ACTIVE"
+    DEPRECATED = "DEPRECATED"

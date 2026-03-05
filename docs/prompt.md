@@ -37,10 +37,10 @@ C) Linux isolation and provisioning
 
 D) File-based formal communication bus
 - Markdown + YAML frontmatter routing with policy checks.
-- Dead-letter handling and deterministic routing behavior.
+- Undelivered queue handling and deterministic routing behavior.
 
 E) Formal workflow state machine
-- Request forms tracked in DB with explicit transitions and holder tracking.
+- Request forms tracked in DB with explicit decisions and holder tracking.
 - Approval-triggered actions (spawn, template updates, later skills/budgets).
 
 F) Dynamic context injection

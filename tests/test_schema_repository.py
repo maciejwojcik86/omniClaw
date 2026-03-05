@@ -3,6 +3,7 @@ import sys
 
 from alembic import command
 from alembic.config import Config
+import pytest
 from sqlalchemy import inspect
 
 
@@ -11,8 +12,9 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from omniclaw.db.enums import NodeStatus, NodeType
-from omniclaw.db.repository import KernelRepository
+from omniclaw.db.enums import FormStatus, FormTypeLifecycle, NodeStatus, NodeType
+from omniclaw.db.models import FormLedger
+from omniclaw.db.repository import KernelRepository, TransitionConflictError
 from omniclaw.db.session import create_engine_from_url, create_session_factory, init_db
 
 
@@ -61,6 +63,302 @@ def test_alembic_upgrade_creates_canonical_tables(tmp_path: Path) -> None:
         "hierarchy",
         "budgets",
         "forms_ledger",
+        "form_types",
+        "form_transition_events",
         "master_skills",
     }.issubset(tables)
 
+    node_columns = {column["name"] for column in inspector.get_columns("nodes")}
+    assert {
+        "linux_username",
+        "linux_password",
+        "workspace_root",
+        "nullclaw_config_path",
+        "primary_model",
+        "gateway_running",
+        "gateway_pid",
+        "gateway_host",
+        "gateway_port",
+        "gateway_started_at",
+        "gateway_stopped_at",
+    }.issubset(node_columns)
+
+    form_columns = {column["name"] for column in inspector.get_columns("forms_ledger")}
+    assert {
+        "form_type_key",
+        "form_type_version",
+        "version",
+        "message_name",
+        "sender_node_id",
+        "target_node_id",
+        "subject",
+        "source_path",
+        "delivery_path",
+        "archive_path",
+        "dead_letter_path",
+        "queued_at",
+        "routed_at",
+        "archived_at",
+        "dead_lettered_at",
+        "failure_reason",
+    }.issubset(form_columns)
+
+
+def test_repository_enforces_single_line_manager(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'line-manager.db'}"
+    engine = create_engine_from_url(database_url)
+    init_db(engine)
+    repository = KernelRepository(create_session_factory(database_url))
+
+    manager_one = repository.create_node(
+        node_type=NodeType.HUMAN,
+        name="Manager_01",
+        status=NodeStatus.ACTIVE,
+    )
+    manager_two = repository.create_node(
+        node_type=NodeType.HUMAN,
+        name="Manager_02",
+        status=NodeStatus.ACTIVE,
+    )
+    worker = repository.create_node(
+        node_type=NodeType.AGENT,
+        name="Worker_01",
+        status=NodeStatus.ACTIVE,
+    )
+
+    repository.link_manager(parent_node_id=manager_one.id, child_node_id=worker.id)
+    with pytest.raises(ValueError, match="already has manager"):
+        repository.link_manager(parent_node_id=manager_two.id, child_node_id=worker.id)
+
+
+def test_repository_creates_message_ledger_entries(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'message-ledger.db'}"
+    engine = create_engine_from_url(database_url)
+    init_db(engine)
+    repository = KernelRepository(create_session_factory(database_url))
+
+    sender = repository.create_node(
+        node_type=NodeType.AGENT,
+        name="Sender_01",
+        status=NodeStatus.ACTIVE,
+        workspace_root="/tmp/sender",
+    )
+    target = repository.create_node(
+        node_type=NodeType.HUMAN,
+        name="Manager_01",
+        status=NodeStatus.ACTIVE,
+        workspace_root="/tmp/manager",
+    )
+
+    created = repository.create_message_ledger_entry(
+        form_id="hello-world",
+        current_status=FormStatus.ARCHIVED.value,
+        current_holder_node=target.id,
+        message_name="hello-world.md",
+        sender_node_id=sender.id,
+        target_node_id=target.id,
+        subject="Hello",
+        source_path="/tmp/sender/outbox/pending/hello-world.md",
+        delivery_path="/tmp/manager/inbox/unread/hello-world.md",
+        archive_path="/tmp/sender/outbox/archive/hello-world.md",
+        dead_letter_path=None,
+        queued_at=None,
+        routed_at=None,
+        archived_at=None,
+        dead_lettered_at=None,
+        failure_reason=None,
+        history_log='[{"status":"QUEUED"},{"status":"ARCHIVED"}]',
+    )
+
+    assert created.form_id.startswith("hello-world")
+    assert created.type == "message"
+    assert created.form_type_key == "message"
+    assert created.current_status == FormStatus.ARCHIVED.value
+    assert created.sender_node_id == sender.id
+    assert created.target_node_id == target.id
+
+    session_factory = create_session_factory(database_url)
+    with session_factory() as session:
+        stored = (
+            session.query(FormLedger)
+            .filter(FormLedger.form_id == created.form_id)
+            .order_by(FormLedger.created_at.asc())
+            .first()
+        )
+        assert stored is not None
+        assert stored.subject == "Hello"
+
+
+def test_repository_upserts_form_type_and_transitions_form(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'form-state.db'}"
+    engine = create_engine_from_url(database_url)
+    init_db(engine)
+    repository = KernelRepository(create_session_factory(database_url))
+
+    owner = repository.create_node(
+        node_type=NodeType.HUMAN,
+        name="Owner_01",
+        status=NodeStatus.ACTIVE,
+    )
+    reviewer = repository.create_node(
+        node_type=NodeType.AGENT,
+        name="Reviewer_01",
+        status=NodeStatus.ACTIVE,
+    )
+
+    definition = repository.upsert_form_type_definition(
+        type_key="feature_pipeline_form",
+        version="1.0.0",
+        lifecycle_state=FormTypeLifecycle.DRAFT,
+        workflow_graph={
+            "initial_status": "DRAFT",
+            "edges": [
+                {
+                    "from": "DRAFT",
+                    "to": "PLANNED",
+                    "decision": "submit",
+                    "next_holder": {"strategy": "field_ref", "value": "implementer_node_id"},
+                }
+            ],
+        },
+        stage_metadata={
+            "DRAFT": {
+                "stage_skill_ref": ".codex/skills/form-type-authoring/SKILL.md",
+                "stage_template_ref": "templates/forms/feature_pipeline_form/draft.md",
+            },
+            "PLANNED": {
+                "stage_skill_ref": ".codex/skills/form-stage-execution/SKILL.md",
+                "stage_template_ref": "templates/forms/feature_pipeline_form/planned.md",
+            },
+        },
+        description="Feature pipeline form",
+        validation_errors=None,
+    )
+    assert definition.type_key == "feature_pipeline_form"
+
+    created = repository.create_form_instance(
+        form_id_hint="feature-pipeline-001",
+        form_type_key="feature_pipeline_form",
+        form_type_version="1.0.0",
+        current_status="DRAFT",
+        current_holder_node=owner.id,
+        actor_node_id=owner.id,
+        decision_key="create",
+        event_payload={"hello": "world"},
+        message_name=None,
+        sender_node_id=owner.id,
+        target_node_id=reviewer.id,
+        subject=None,
+        source_path=None,
+        delivery_path=None,
+        archive_path=None,
+        dead_letter_path=None,
+        queued_at=None,
+        routed_at=None,
+        archived_at=None,
+        dead_lettered_at=None,
+        failure_reason=None,
+    )
+    assert created.current_status == "DRAFT"
+    assert created.current_holder_node == owner.id
+
+    transitioned = repository.transition_form_instance(
+        form_id=created.form_id,
+        expected_from_status="DRAFT",
+        to_status="PLANNED",
+        new_holder_node_id=reviewer.id,
+        actor_node_id=owner.id,
+        decision_key="submit",
+        event_payload={"ready": True},
+    )
+    assert transitioned.current_status == "PLANNED"
+    assert transitioned.current_holder_node == reviewer.id
+
+    events = repository.list_form_transition_events(form_id=created.form_id)
+    assert len(events) == 2
+    assert events[0].to_status == "DRAFT"
+    assert events[1].to_status == "PLANNED"
+
+
+def test_repository_rejects_stale_transition_state(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'form-transition-conflict.db'}"
+    engine = create_engine_from_url(database_url)
+    init_db(engine)
+    repository = KernelRepository(create_session_factory(database_url))
+
+    owner = repository.create_node(
+        node_type=NodeType.AGENT,
+        name="Conflict_Owner",
+        status=NodeStatus.ACTIVE,
+    )
+
+    created = repository.create_form_instance(
+        form_id_hint="stale-state",
+        form_type_key="message",
+        form_type_version="1.0.0",
+        current_status="DRAFT",
+        current_holder_node=owner.id,
+        actor_node_id=owner.id,
+        decision_key="create",
+        event_payload=None,
+        message_name=None,
+        sender_node_id=owner.id,
+        target_node_id=owner.id,
+        subject=None,
+        source_path=None,
+        delivery_path=None,
+        archive_path=None,
+        dead_letter_path=None,
+        queued_at=None,
+        routed_at=None,
+        archived_at=None,
+        dead_lettered_at=None,
+        failure_reason=None,
+    )
+    repository.transition_form_instance(
+        form_id=created.form_id,
+        expected_from_status="DRAFT",
+        to_status="WAITING_TO_BE_READ",
+        new_holder_node_id=owner.id,
+        actor_node_id=owner.id,
+        decision_key="send",
+        event_payload=None,
+    )
+
+    with pytest.raises(TransitionConflictError, match="concurrent transition conflict"):
+        repository.transition_form_instance(
+            form_id=created.form_id,
+            expected_from_status="DRAFT",
+            to_status="ARCHIVED",
+            new_holder_node_id=None,
+            actor_node_id=owner.id,
+            decision_key="close",
+            event_payload=None,
+        )
+
+
+def test_repository_resolves_unique_node_reference(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'resolve-node-reference.db'}"
+    engine = create_engine_from_url(database_url)
+    init_db(engine)
+    repository = KernelRepository(create_session_factory(database_url))
+
+    node = repository.create_node(
+        node_type=NodeType.AGENT,
+        name="Resolver_Node",
+        status=NodeStatus.ACTIVE,
+    )
+
+    by_name, error_by_name = repository.resolve_unique_node_reference("Resolver_Node")
+    assert error_by_name is None
+    assert by_name is not None
+    assert by_name.id == node.id
+
+    by_id, error_by_id = repository.resolve_unique_node_reference(node.id)
+    assert error_by_id is None
+    assert by_id is not None
+    assert by_id.id == node.id
+
+    missing, missing_error = repository.resolve_unique_node_reference("missing-node")
+    assert missing is None
+    assert missing_error == "node name 'missing-node' not found"

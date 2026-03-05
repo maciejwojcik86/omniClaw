@@ -7,21 +7,29 @@ REQUIRED_DIRS: tuple[str, ...] = (
     "inbox/read",
     "outbox/pending",
     "outbox/drafts",
-    "outbox/sent",
+    "outbox/archive",
     "notes",
-    "journal",
     "metrics",
     "drafts",
     "skills",
 )
 
 REQUIRED_FILES: dict[str, str] = {
-    "notes/TODO.md": "# TODO\\n\\n- [ ] Add first task\\n",
-    "notes/DECISIONS.md": "# Decisions\\n\\n",
-    "notes/BLOCKERS.md": "# Blockers\\n\\n",
-    "metrics/KPI.csv": "date,metric,value\\n",
-    "persona_template.md": "# Persona Template\\n\\n",
-    "AGENTS.md": "# AGENTS\\n\\nRendered by kernel context injector.\\n",
+    "notes/DECISIONS.md": "# Decisions\n\n",
+    "notes/BLOCKERS.md": "# Blockers\n\n",
+    "metrics/KPI.csv": "date,metric,value\n",
+    "HEARTBEAT.md": (
+        "# HEARTBEAT.md\n\n"
+        "- Check `inbox/unread` for new form files.\n"
+        "- For each unread message form, run only:\n"
+        "  `python3 skills/read_and_acknowledge_internal_message/scripts/acknowledge_and_archive_message.py --apply --workspace-root <this_workspace_root> --form-file <unread_filename>`\n"
+        "- Execute these steps immediately without asking for extra confirmation.\n"
+        "- Avoid exploratory shell commands unrelated to the skill execution.\n"
+        "- The read/ack tool moves `inbox/unread/<file>.md` to `inbox/read/<file>.md` and updates DB form stage.\n"
+        "- Keep handled copies out of `inbox/unread`.\n"
+        "- If nothing needs attention, reply with `HEARTBEAT_OK`.\n"
+    ),
+    "AGENTS.md": "# AGENTS\n\nRendered by kernel context injector.\n",
 }
 
 

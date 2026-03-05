@@ -1,0 +1,30 @@
+{
+  "form_type": "message",
+  "version": "2.1.0",
+  "description": "Generic internal message form routed by workflow stages.",
+  "start_stage": "DRAFT",
+  "end_stage": "ARCHIVED",
+  "dispatch_decision": "send",
+  "acknowledge_decision": "acknowledge_read",
+  "stages": {
+    "DRAFT": {
+      "target": "{{initiator}}",
+      "required_skill": "draft_internal_message",
+      "decisions": {
+        "send": "WAITING_TO_BE_READ"
+      }
+    },
+    "WAITING_TO_BE_READ": {
+      "target": "{{any}}",
+      "required_skill": "read_and_acknowledge_internal_message",
+      "decisions": {
+        "acknowledge_read": "ARCHIVED"
+      }
+    },
+    "ARCHIVED": {
+      "target": null,
+      "is_terminal": true
+    }
+  },
+  "stage_metadata": {}
+}

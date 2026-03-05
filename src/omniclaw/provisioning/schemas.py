@@ -18,6 +18,8 @@ class ProvisioningActionRequest(BaseModel):
         "create_workspace",
         "apply_workspace_permissions",
         "provision_agent",
+        "register_human",
+        "set_line_manager",
     ]
     username: str | None = None
     node_name: str | None = None
@@ -30,4 +32,10 @@ class ProvisioningActionRequest(BaseModel):
     owner_user: str | None = None
     manager_group: str | None = None
     manager_node_id: str | None = None
+    manager_node_name: str | None = None
+    target_node_id: str | None = None
+    target_node_name: str | None = None
     autonomy_level: int = 2
+    nullclaw_config_path: str | None = None
+    primary_model: str | None = None
+    linux_password: str | None = None

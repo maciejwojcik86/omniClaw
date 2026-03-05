@@ -9,10 +9,17 @@ OmniClaw builds a kernel that orchestrates isolated Linux-user agents using form
   - Linux user creation
   - Workspace scaffold creation
   - Ownership/group permission policy
-- Use `$provision-agent-workspace` as the default unified provisioning skill (workflow + setup + audit).
+- Use `$deploy-new-claw-agent` as the default unified provisioning skill (workflow + setup + audit).
+- Use `$nullclaw-runtime-reference` for upstream Nullclaw runtime/config/extension references.
+- Use `$runtime-gateway-control` for delegated gateway on/off/status endpoint workflows.
+- Use `$alembic-migration-ops` when changing schema or verifying migration success.
 - Every proven implementation pattern MUST be captured as a reusable skill under `.codex/skills/<skill-name>/SKILL.md`.
 - Skills may reference helper scripts under `scripts/` and may call privileged kernel endpoints instead of running privileged commands directly when needed.
 - Once a modular step is validated, keep the skill updated in the same change so the lesson is retained for future sessions.
+- After every completed implementation slice (task/subtask/fix), run a Skill Delta Review:
+  - If an existing skill covers the slice, update that skill with new SOP steps, command cheatsheet entries, and script references.
+  - If no skill covers the slice, create a new focused skill immediately (modular SOP, not monolithic playbook).
+  - Record reusable commands and helper scripts so other agents can repeat the workflow without rediscovery.
 
 ## Canonical Source Order
 Resolve requirements in this exact order:
@@ -43,7 +50,8 @@ Use this loop to maintain long-horizon context discipline:
 3. Implement and test against active OpenSpec tasks.
 4. Update `docs/documentation.md` with any new architecture or runtime behavior.
 5. Update `docs/current-task.md` and `docs/plan.md` status/checklists.
-6. Capture successful implementation patterns as reusable skills in `.codex/skills`.
+6. After each completed task, run Skill Delta Review and update/create skills in `.codex/skills` plus any referenced helper scripts.
+7. Before archive, run a final OpenSpec Skill Review Gate to confirm all reusable lessons are captured as skill updates or new skills.
 
 ## OpenSpec Workflow Contract
 Every milestone is one OpenSpec change and must follow this exact sequence:
@@ -54,7 +62,11 @@ Every milestone is one OpenSpec change and must follow this exact sequence:
 5. `openspec instructions tasks --change <change-id>` and author `tasks.md`
 6. Implement only what is in `tasks.md`
 7. Validate with `openspec validate --type change <change-id> --strict`
-8. Archive with `openspec archive <change-id> -y`
+8. Run OpenSpec Skill Review Gate:
+   - Review completed tasks for reusable workflows/operations.
+   - Update existing skills or author new skills with SOP steps, verification commands, and fallback paths.
+   - Add or refresh helper scripts referenced by those skills where repeatability warrants automation.
+9. Archive with `openspec archive <change-id> -y`
 
 ## Task Tracking Contract
 - Start every work session by reading `docs/current-task.md`.
@@ -62,12 +74,15 @@ Every milestone is one OpenSpec change and must follow this exact sequence:
 - After every completed task, update both:
   - `docs/plan.md`
   - `docs/current-task.md`
+- After every completed task, also execute Skill Delta Review and update/create `.codex/skills` artifacts in the same change.
 
 ## Skill Capture Contract
 - When a workflow step is stable and repeatable, document it as a skill immediately.
 - Skills must include: scope, required inputs, execution steps, verification commands, and fallback path.
 - Prefer composing multiple focused skills rather than building a single all-in-one script.
 - Keep helper scripts referenced by skills in `scripts/` and keep script usage examples current.
+- Treat each skill as a modular SOP for future agents; include concise command cheatsheets for critical operator actions (for example provisioning and Linux permission control).
+- Skill updates are mandatory closure work, not optional documentation cleanup.
 
 ## Definition of Done
 A change is done only when all are true:
@@ -75,6 +90,7 @@ A change is done only when all are true:
 - Relevant tests/checks pass.
 - `openspec validate --type change <change-id> --strict` passes.
 - `docs/current-task.md` and `docs/plan.md` are updated.
+- OpenSpec Skill Review Gate is complete (existing skills updated and/or new skills created for reusable workflows).
 - Repository map in this file is updated when structure/schema/API changed.
 
 ## Scope Guardrails
@@ -108,9 +124,19 @@ Top-level map (update as project evolves):
 - `alembic/`: migration environment and versioned schema migration scripts.
 - `alembic.ini`: Alembic runtime configuration.
 - `src/omniclaw/`: kernel Python package (app factory, config, logging, runtime modules).
+- `src/omniclaw/ipc/`: file IPC router schemas/service for generic form scan/routing (`scan_forms`, `scan_messages` alias).
+- `src/omniclaw/forms/`: form-type registry actions and graph-based state-machine decision service.
 - `tests/`: automated verification for API/runtime behavior.
 - `.codex/skills/`: project-local reusable skills for modular implementation workflows.
 - `scripts/provisioning/`: helper scripts used by provisioning-related skills and manual verification.
+- `scripts/runtime/`: helper scripts for runtime gateway action triggers and smoke checks.
+- `scripts/ipc/`: helper scripts for IPC router action triggers and form-routing checks.
+- `scripts/forms/`: helper scripts for form-type administration, workspace workflow publication, and smoke checks.
+- `workspace/`: repo-local supervisor/agent workspaces plus company-level form/skill artifacts.
+  - `workspace/forms/`: approved canonical form workflow packages (`<form_type>/workflow.json`).
+  - `workspace/forms/<form_type>/skills/`: per-form stage skill master copies (`<required_skill>/...`).
+  - `workspace/master_skills/`: approved master skills for company behavior bootstrapping.
+  - `workspace/form_archive/`: archived routed-form copies grouped by form type/id.
 - `main.py`: temporary bootstrap entrypoint.
 - `pyproject.toml`: Python project metadata.
 - `uv.lock`: resolved dependency lockfile for reproducible `uv` runs.

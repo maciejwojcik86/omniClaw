@@ -15,6 +15,29 @@ username=""
 home_dir=""
 uid_value=""
 shell_path="/usr/sbin/nologin"
+helper_path="${OMNICLAW_PROVISIONING_HELPER_PATH:-}"
+helper_use_sudo="${OMNICLAW_PROVISIONING_HELPER_USE_SUDO:-false}"
+
+helper_cmd() {
+  local action="$1"
+  shift
+  local command=()
+  if [[ -n "$helper_path" ]]; then
+    if [[ ! -x "$helper_path" ]]; then
+      echo "Configured provisioning helper is not executable: $helper_path" >&2
+      exit 1
+    fi
+    if [[ "${helper_use_sudo,,}" == "true" || "$helper_use_sudo" == "1" ]]; then
+      command=(sudo -n "$helper_path" "$action" "$@")
+    else
+      command=("$helper_path" "$action" "$@")
+    fi
+    "${command[@]}"
+    return
+  fi
+  echo "No provisioning helper configured." >&2
+  exit 1
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -84,8 +107,16 @@ if [[ "$dry_run" -eq 1 ]]; then
   printf "DRY-RUN user creation command:"
   printf " %q" "${cmd[@]}"
   printf "\n"
+  if [[ "$(id -u)" -ne 0 && -n "$helper_path" ]]; then
+    echo "DRY-RUN note: apply mode will use provisioning helper '$helper_path' because current user is non-root."
+  fi
   exit 0
 fi
 
-"${cmd[@]}"
+if [[ "$(id -u)" -eq 0 ]]; then
+  "${cmd[@]}"
+else
+  helper_cmd create_user "$username" "$home_dir" "$shell_path" "$uid_value"
+fi
+
 echo "Created user '$username' with home '$home_dir' and shell '$shell_path'."

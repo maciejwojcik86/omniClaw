@@ -58,11 +58,9 @@ Execution start instruction
 - Resume from the active milestone listed in `docs/current-task.md`.
 - If `docs/current-task.md` and `docs/plan.md` disagree, reconcile them before coding.
 
-Current M04 execution approach
+Current execution status
 
-- Implement runtime bootstrap in narrow, testable steps with OpenSpec artifact-first discipline.
-- Use configurable Nullclaw command templates and Nullclaw home paths:
-  - config: `~/.nullclaw/config.json`
-  - workspace: `~/.nullclaw/workspace`
-- Keep restricted user-context execution and drafts-bound output policy explicit in service checks.
-- Capture deterministic run metadata per launch and cover with unit tests + smoke path.
+- Change `hardening-runtime-ipc-core` is complete and archived.
+- Change `ipc-invalid-feedback-and-dedupe` is complete and archived.
+- Current branch has no active open change.
+- Next execution step: open M07 planning/proposal change when approved.

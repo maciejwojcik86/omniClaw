@@ -1,0 +1,20 @@
+{
+  "start_stage": "DRAFT",
+  "end_stage": "ARCHIVED",
+  "stages": {
+    "DRAFT": {
+      "target": "{{initiator}}",
+      "required_skill": "draft_internal_message",
+      "decisions": {
+        "close": "ARCHIVED"
+      }
+    },
+    "ARCHIVED": {
+      "target": null,
+      "is_terminal": true
+    }
+  },
+  "form_type": "custom_message_form",
+  "version": "3.0.0",
+  "stage_metadata": {}
+}
