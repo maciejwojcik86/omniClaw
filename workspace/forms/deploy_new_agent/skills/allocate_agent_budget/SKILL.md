@@ -33,7 +33,7 @@ Decide whether the deployment is financially feasible and sufficiently justified
 3. Append `templates/finance_review.md` with concrete numbers and rationale.
 4. Set frontmatter `decision`:
    - `approve_to_director` or `return_to_hr`
-5. Save updated form to `<workspace>/outbox/pending/`.
+5. Save updated form to `/outbox/pending/`.
 
 ## Quality Requirements
 - Use explicit numeric ranges where possible.
