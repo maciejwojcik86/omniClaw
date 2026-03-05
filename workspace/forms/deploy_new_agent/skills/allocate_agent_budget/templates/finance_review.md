@@ -3,7 +3,7 @@
 ### Budget Snapshot
 - Reviewer:
 - Review date:
-- Recommended decision (`approve_to_director` or `return_to_hr`):
+- Recommended decision (`approve_to_director` or `return_to_hr` [update YAML frontmatter with decision as well]):
 
 ### Cost Model
 - Estimated daily budget:
