@@ -2,7 +2,7 @@ You are Codex acting as a principal engineer and long-horizon execution lead for
 
 ## Core goals
 
-- Deliver a production-quality OmniClaw Kernel that orchestrates isolated Linux-user agents with deterministic, auditable workflows.
+- Deliver a production-quality OmniClaw Kernel that orchestrates repo-local Nanobot agents with deterministic, auditable workflows.
 - Keep delivery reliable over long runs: plan first, then execute one OpenSpec change at a time.
 - Maintain continuous alignment with PRD intent while preserving implementation rigor (types, tests, migrations, verification).
 
@@ -31,9 +31,9 @@ B) Canonical relational state
 - Core entities: `nodes`, `hierarchy`, `budgets`, `forms_ledger`, `master_skills`.
 - Enum-constrained lifecycle fields.
 
-C) Linux isolation and provisioning
-- Controlled creation of Linux users/workspaces.
-- Manager/subordinate permission model.
+C) Agent directory provisioning
+- Controlled creation of repo-local agent directories and workspaces.
+- Manager/subordinate linkage without per-agent Linux users.
 
 D) File-based formal communication bus
 - Markdown + YAML frontmatter routing with policy checks.

@@ -2,6 +2,9 @@
   "form_type": "message",
   "version": "2.1.0",
   "description": "Generic internal message form routed by workflow stages.",
+  "initiator_allowlist": [
+    "{{any}}"
+  ],
   "start_stage": "DRAFT",
   "end_stage": "ARCHIVED",
   "dispatch_decision": "send",
@@ -9,14 +12,14 @@
   "stages": {
     "DRAFT": {
       "target": "{{initiator}}",
-      "required_skill": "draft_internal_message",
+      "required_skill": "draft-internal-message",
       "decisions": {
         "send": "WAITING_TO_BE_READ"
       }
     },
     "WAITING_TO_BE_READ": {
       "target": "{{any}}",
-      "required_skill": "read_and_acknowledge_internal_message",
+      "required_skill": "read-and-acknowledge-internal-message",
       "decisions": {
         "acknowledge_read": "ARCHIVED"
       }

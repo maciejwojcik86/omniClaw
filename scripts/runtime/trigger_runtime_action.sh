@@ -20,7 +20,7 @@ action=""
 node_id=""
 node_name=""
 gateway_host="127.0.0.1"
-gateway_port="3000"
+gateway_port="18790"
 force_restart="false"
 
 while [[ $# -gt 0 ]]; do

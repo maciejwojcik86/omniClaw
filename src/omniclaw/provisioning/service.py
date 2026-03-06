@@ -10,6 +10,7 @@ from omniclaw.db.enums import NodeStatus, NodeType
 from omniclaw.db.models import Node
 from omniclaw.db.repository import KernelRepository
 from omniclaw.provisioning.contracts import ProvisioningAdapter
+from omniclaw.provisioning.scaffold import ensure_nanobot_config
 from omniclaw.provisioning.schemas import ProvisioningActionRequest
 
 
@@ -82,7 +83,10 @@ class ProvisioningService:
                 fallback=self._default_human_workspace_root(username),
             )
             resolved_workspace_root = workspace_root.expanduser().resolve()
-            nullclaw_config_path = self._resolve_config_path(request, home_dir=home_dir)
+            runtime_config_path = self._resolve_config_path(
+                request,
+                home_dir=home_dir,
+            )
 
             user_result = self._adapter.ensure_user(
                 username=username,
@@ -103,7 +107,7 @@ class ProvisioningService:
 
             primary_model = self._resolve_primary_model(
                 request=request,
-                nullclaw_config_path=nullclaw_config_path,
+                runtime_config_path=runtime_config_path,
             )
             linux_password = self._resolve_linux_password(request)
             resolved_name = request.node_name or username
@@ -116,7 +120,7 @@ class ProvisioningService:
                 linux_username=username,
                 linux_password=linux_password,
                 workspace_root=str(resolved_workspace_root),
-                nullclaw_config_path=str(nullclaw_config_path),
+                runtime_config_path=str(runtime_config_path),
                 primary_model=primary_model,
                 autonomy_level=request.autonomy_level,
             )
@@ -141,46 +145,40 @@ class ProvisioningService:
             if manager is None:
                 raise HTTPException(status_code=422, detail="manager_node_id or manager_node_name is required")
 
-            username = self._require(request.username, "username")
-            home_dir = request.home_dir or f"/home/{username}"
+            resolved_name = request.node_name or request.username
+            if not resolved_name:
+                raise HTTPException(status_code=422, detail="node_name or username is required")
+
+            username = request.username
             workspace_root = self._resolve_workspace_root(
                 request,
-                fallback=Path(home_dir) / ".nullclaw" / "workspace",
+                fallback=self._default_agent_workspace_root(resolved_name),
             )
             resolved_workspace_root = workspace_root.expanduser().resolve()
-            nullclaw_config_path = self._resolve_config_path(request, home_dir=home_dir)
-            user_result = self._adapter.ensure_user(
-                username=username,
-                home_dir=home_dir,
-                shell=request.shell,
-                uid=request.uid,
-                groups=request.groups,
+            runtime_config_path = self._resolve_config_path(
+                request,
+                workspace_root=resolved_workspace_root,
             )
             workspace_result = self._adapter.ensure_workspace(workspace_root=workspace_root)
+            runtime_config_result = ensure_nanobot_config(
+                config_path=runtime_config_path,
+                workspace_root=resolved_workspace_root,
+                apply=True,
+                primary_model=request.primary_model,
+            )
             primary_model = self._resolve_primary_model(
                 request=request,
-                nullclaw_config_path=nullclaw_config_path,
+                runtime_config_path=runtime_config_path,
             )
             linux_password = self._resolve_linux_password(request)
-
-            permission_result = None
-            if request.manager_group:
-                permission_result = self._adapter.apply_permissions(
-                    owner_user=username,
-                    manager_group=request.manager_group,
-                    workspace_root=workspace_root,
-                )
-
-            resolved_name = request.node_name or username
             node, created = self._repository.upsert_node_by_name(
                 node_type=NodeType.AGENT,
                 name=resolved_name,
                 status=NodeStatus.ACTIVE,
-                linux_uid=user_result.uid,
                 linux_username=username,
                 linux_password=linux_password,
                 workspace_root=str(resolved_workspace_root),
-                nullclaw_config_path=str(nullclaw_config_path),
+                runtime_config_path=str(runtime_config_path),
                 primary_model=primary_model,
                 autonomy_level=request.autonomy_level,
             )
@@ -196,8 +194,8 @@ class ProvisioningService:
             manager_subordinate_count = len(self._repository.list_children(parent_node_id=manager.id))
             result = {
                 "action": action,
-                "user": asdict(user_result),
                 "workspace": asdict(workspace_result),
+                "runtime_config": runtime_config_result,
                 "node": self._serialize_node(node=node, created=created),
                 "manager": {
                     "id": manager.id,
@@ -206,8 +204,6 @@ class ProvisioningService:
                     "subordinate_count": manager_subordinate_count,
                 },
             }
-            if permission_result is not None:
-                result["permissions"] = asdict(permission_result)
             return self._attach_operations(result)
 
         if action == "set_line_manager":
@@ -269,14 +265,28 @@ class ProvisioningService:
             return value
         raise HTTPException(status_code=422, detail=f"{field_name} is required")
 
-    def _resolve_config_path(self, request: ProvisioningActionRequest, *, home_dir: str) -> Path:
-        if request.nullclaw_config_path:
-            return Path(request.nullclaw_config_path).expanduser().resolve()
-        return (Path(home_dir) / ".nullclaw" / "config.json").expanduser().resolve()
+    def _resolve_config_path(
+        self,
+        request: ProvisioningActionRequest,
+        *,
+        home_dir: str | None = None,
+        workspace_root: Path | None = None,
+    ) -> Path:
+        if request.runtime_config_path:
+            return Path(request.runtime_config_path).expanduser().resolve()
+        if workspace_root is not None:
+            return (workspace_root.expanduser().resolve().parent / "config.json").resolve()
+        if home_dir is None:
+            raise HTTPException(status_code=422, detail="runtime_config_path could not be resolved")
+        return (Path(home_dir) / ".nanobot" / "config.json").expanduser().resolve()
 
     def _default_human_workspace_root(self, username: str) -> Path:
         repo_root = Path(__file__).resolve().parents[3]
         return repo_root / "workspace" / username
+
+    def _default_agent_workspace_root(self, agent_name: str) -> Path:
+        repo_root = Path(__file__).resolve().parents[3]
+        return repo_root / "workspace" / "agents" / agent_name / "workspace"
 
     def _resolve_manager_node(self, *, request: ProvisioningActionRequest, required: bool) -> Node | None:
         manager_node_id = request.manager_node_id
@@ -309,23 +319,27 @@ class ProvisioningService:
             raise HTTPException(status_code=404, detail="target agent node not found")
         return target
 
-    def _resolve_primary_model(self, *, request: ProvisioningActionRequest, nullclaw_config_path: Path) -> str | None:
+    def _resolve_primary_model(self, *, request: ProvisioningActionRequest, runtime_config_path: Path) -> str | None:
         if request.primary_model:
             return request.primary_model
 
         try:
-            config = json.loads(nullclaw_config_path.read_text(encoding="utf-8"))
+            config = json.loads(runtime_config_path.read_text(encoding="utf-8"))
         except (FileNotFoundError, PermissionError, OSError, json.JSONDecodeError):
             return None
 
-        default_model = (
+        default_model = config.get("agents", {}).get("defaults", {}).get("model")
+        if isinstance(default_model, str) and default_model.strip():
+            return default_model.strip()
+
+        nested_default_model = (
             config.get("agents", {})
             .get("defaults", {})
             .get("model", {})
             .get("primary")
         )
-        if isinstance(default_model, str) and default_model.strip():
-            return default_model.strip()
+        if isinstance(nested_default_model, str) and nested_default_model.strip():
+            return nested_default_model.strip()
 
         legacy_default_model = config.get("default_model")
         if isinstance(legacy_default_model, str) and legacy_default_model.strip():
@@ -345,7 +359,7 @@ class ProvisioningService:
             "linux_uid": node.linux_uid,
             "linux_username": node.linux_username,
             "workspace_root": node.workspace_root,
-            "nullclaw_config_path": node.nullclaw_config_path,
+            "runtime_config_path": node.runtime_config_path,
             "primary_model": node.primary_model,
             "password_present": bool(node.linux_password),
             "status": node.status.value,

@@ -16,7 +16,9 @@ class Settings:
     runtime_mode: str = "mock"
     allow_privileged_runtime: bool = False
     runtime_use_sudo: bool = False
-    runtime_gateway_command_template: str = "nullclaw gateway --host {host} --port {port}"
+    runtime_gateway_command_template: str = (
+        "nanobot gateway --workspace {workspace_root} --config {config_path} --port {port}"
+    )
     runtime_command_timeout_seconds: int = 30
     runtime_output_boundary_rel: str = "drafts/runtime"
     ipc_queue_paths: tuple[str, ...] = ("outbox/pending",)
@@ -85,7 +87,7 @@ def load_settings() -> Settings:
         ),
         runtime_gateway_command_template=getenv(
             "OMNICLAW_RUNTIME_GATEWAY_COMMAND_TEMPLATE",
-            "nullclaw gateway --host {host} --port {port}",
+            "nanobot gateway --workspace {workspace_root} --config {config_path} --port {port}",
         ),
         runtime_command_timeout_seconds=_parse_int(
             getenv("OMNICLAW_RUNTIME_COMMAND_TIMEOUT_SECONDS"),

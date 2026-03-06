@@ -25,6 +25,7 @@ This repo now includes revisions:
 - `20260301_0002`: add node runtime tracking columns.
 - `20260301_0003`: rename `linux_password_hash` to `linux_password` and enforce one manager per child node.
 - `20260305_0008`: add `forms_ledger.version` optimistic-lock column.
+- `20260306_0010`: rename `nodes.nullclaw_config_path` to `nodes.runtime_config_path` for the Nanobot runtime pivot.
 
 Validated state in this repo:
 - `uv run alembic current` => current revision at head
@@ -83,4 +84,4 @@ uv run pytest -q
 ## Related Skills
 
 - `$authoring-skills`: structure and writing standards for skills.
-- `$deploy-new-claw-agent`: provisioning flow that depends on migrated DB state.
+- `$deploy-new-nanobot`: provisioning flow that depends on migrated DB state.

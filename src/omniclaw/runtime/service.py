@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import getpass
 import json
 from pathlib import Path
 import shlex
@@ -48,8 +47,14 @@ class RuntimeService:
 
     def _gateway_start(self, *, node: Node, request: RuntimeActionRequest) -> dict[str, object]:
         workspace_root = self._resolve_workspace_root(node)
+        config_path = self._resolve_runtime_config_path(node)
         artifact_paths = self._resolve_artifact_paths(workspace_root)
-        gateway_command_args = self._build_gateway_command_args(host=request.gateway_host, port=request.gateway_port)
+        gateway_command_args = self._build_gateway_command_args(
+            host=request.gateway_host,
+            port=request.gateway_port,
+            workspace_root=workspace_root,
+            config_path=config_path,
+        )
         gateway_command = shlex.join(gateway_command_args)
         started_at = datetime.now(timezone.utc)
 
@@ -101,7 +106,7 @@ class RuntimeService:
             gateway_command=gateway_command,
             artifact_paths=artifact_paths,
         )
-        process = self._run_as_user(username=node.linux_username or "", script=script)
+        process = self._run_runtime_script(script=script)
         finished_at = datetime.now(timezone.utc)
 
         if process.returncode not in {0, 10}:
@@ -208,7 +213,7 @@ class RuntimeService:
             }
 
         script = self._build_stop_script(artifact_paths=artifact_paths)
-        process = self._run_as_user(username=node.linux_username or "", script=script)
+        process = self._run_runtime_script(script=script)
         finished_at = datetime.now(timezone.utc)
         if process.returncode not in {0, 11}:
             self._write_run_metadata(
@@ -288,7 +293,7 @@ class RuntimeService:
             }
 
         script = self._build_status_script(artifact_paths=artifact_paths)
-        process = self._run_as_user(username=node.linux_username or "", script=script)
+        process = self._run_runtime_script(script=script)
         finished_at = datetime.now(timezone.utc)
         if process.returncode != 0:
             self._write_run_metadata(
@@ -349,14 +354,20 @@ class RuntimeService:
         return node
 
     def _resolve_workspace_root(self, node: Node) -> Path:
-        if not node.linux_username:
-            raise HTTPException(status_code=409, detail=f"node '{node.name}' has no linux_username")
         if not node.workspace_root:
             raise HTTPException(status_code=409, detail=f"node '{node.name}' has no workspace_root")
         workspace_root = Path(node.workspace_root).expanduser().resolve()
         if not workspace_root.exists():
             raise HTTPException(status_code=409, detail=f"workspace root does not exist: {workspace_root}")
         return workspace_root
+
+    def _resolve_runtime_config_path(self, node: Node) -> Path:
+        if not node.runtime_config_path:
+            raise HTTPException(status_code=409, detail=f"node '{node.name}' has no runtime_config_path")
+        config_path = Path(node.runtime_config_path).expanduser().resolve()
+        if self._mode != "mock" and not config_path.exists():
+            raise HTTPException(status_code=409, detail=f"runtime config does not exist: {config_path}")
+        return config_path
 
     def _resolve_artifact_paths(self, workspace_root: Path) -> dict[str, str]:
         boundary_rel = self._settings.runtime_output_boundary_rel.strip().strip("/")
@@ -377,10 +388,22 @@ class RuntimeService:
             "gateway_log_file": str(artifact_root / "gateway.log"),
         }
 
-    def _build_gateway_command_args(self, *, host: str, port: int) -> list[str]:
+    def _build_gateway_command_args(
+        self,
+        *,
+        host: str,
+        port: int,
+        workspace_root: Path,
+        config_path: Path,
+    ) -> list[str]:
         template = self._settings.runtime_gateway_command_template
         try:
-            rendered = template.format(host=host, port=port)
+            rendered = template.format(
+                host=host,
+                port=port,
+                workspace_root=str(workspace_root),
+                config_path=str(config_path),
+            )
         except KeyError as exc:
             raise HTTPException(status_code=500, detail=f"Invalid runtime gateway command template: {template}") from exc
         if not rendered.strip():
@@ -472,27 +495,10 @@ class RuntimeService:
             "echo \"stopped\"\n"
         )
 
-    def _run_as_user(self, *, username: str, script: str) -> subprocess.CompletedProcess[str]:
-        if not username:
-            raise HTTPException(status_code=409, detail="linux username is missing")
-
-        if self._settings.runtime_use_sudo:
-            command = ["sudo", "-n", "-u", username, "-H", "bash", "-lc", script]
-        else:
-            current_user = getpass.getuser()
-            if current_user != username:
-                raise HTTPException(
-                    status_code=500,
-                    detail=(
-                        "runtime_use_sudo=false but target user differs from kernel user. "
-                        "Set OMNICLAW_RUNTIME_USE_SUDO=true for cross-user runtime control."
-                    ),
-                )
-            command = ["bash", "-lc", script]
-
+    def _run_runtime_script(self, *, script: str) -> subprocess.CompletedProcess[str]:
         try:
             return subprocess.run(
-                command,
+                ["bash", "-lc", script],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -501,10 +507,7 @@ class RuntimeService:
         except subprocess.TimeoutExpired as exc:
             raise HTTPException(
                 status_code=504,
-                detail=(
-                    f"runtime command timed out after {self._settings.runtime_command_timeout_seconds}s "
-                    f"for user '{username}'"
-                ),
+                detail=f"runtime command timed out after {self._settings.runtime_command_timeout_seconds}s",
             ) from exc
 
     def _write_run_metadata(
@@ -552,9 +555,9 @@ class RuntimeService:
             "status": node.status.value,
             "linux_username": node.linux_username,
             "workspace_root": node.workspace_root,
-            "nullclaw_config_path": node.nullclaw_config_path,
+            "runtime_config_path": node.runtime_config_path,
             "primary_model": node.primary_model,
-            "deployed": bool(node.linux_username and node.workspace_root and node.nullclaw_config_path),
+            "deployed": bool(node.workspace_root and node.runtime_config_path),
             "gateway_running": bool(node.gateway_running),
             "gateway_pid": node.gateway_pid,
             "gateway_host": node.gateway_host,

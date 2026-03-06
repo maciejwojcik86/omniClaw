@@ -8,13 +8,15 @@ Cause:
 Fix:
 - Set `OMNICLAW_ALLOW_PRIVILEGED_RUNTIME=true` and restart kernel service.
 
-## 500 "runtime_use_sudo=false but target user differs"
+## 409/500 runtime launch path mismatch
 
 Cause:
-- Kernel user is not the target Linux user and sudo switching is disabled.
+- Runtime metadata is missing, the workspace/config path is wrong, or the configured launch template does not match the Nanobot contract.
 
 Fix:
-- Set `OMNICLAW_RUNTIME_USE_SUDO=true` for cross-user control.
+- Verify `workspace_root` and `runtime_config_path` on the AGENT row.
+- Verify the runtime template uses explicit Nanobot inputs:
+  - `nanobot gateway --workspace {workspace_root} --config {config_path} --port {port}`
 
 ## 404 "agent node not found"
 
@@ -27,12 +29,14 @@ Fix:
 ## 500 gateway start/stop failure with exit code
 
 Cause:
-- Nullclaw binary or auth/config is missing for target user, or permissions block command execution.
+- Nanobot binary is missing, the agent config/workspace path is wrong, or the runtime command fails inside the configured workspace boundary.
 
 Fix:
-- Re-run `$deploy-new-claw-agent` workflow for that user.
-- Verify shared binary link: `/home/<user>/.local/bin/nullclaw`.
-- Verify config/auth under `/home/<user>/.nullclaw/`.
+- Re-run `$deploy-new-nanobot` for that agent.
+- Verify config path: `workspace/agents/<agent_name>/config.json`.
+- Verify workspace root: `workspace/agents/<agent_name>/workspace/`.
+- Run a manual smoke command:
+  - `nanobot agent -w <workspace_root> -c <config_path> -m "hello"`
 
 ## `already_running` / `already_stopped`
 

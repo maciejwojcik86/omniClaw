@@ -28,8 +28,9 @@ Checkpoint sweep:
 | M04 | `m04-agent-runtime-bootstrap` | Foundation | completed | M03 | engineering | Gateway on/off control + runtime metadata + DB runtime-state tracking |
 | M05 | `m05-file-ipc-router` | Communication Bus | completed | M04 | engineering | Outbox->Inbox route in <=5s with deterministic validation + target resolution checks |
 | M06 | `m06-forms-ledger-state-machine` | Communication Bus | completed | M05 | engineering | Form registry + graph decisions + deterministic holder semantics + append-only history |
-| M07 | `m07-approval-action-executors` | Workflow Automation | planned | M06 | engineering | Approved SPAWN/UPDATE_TEMPLATE trigger side effects |
-| M08 | `m08-context-injector` | Context Injection | planned | M07 | engineering | Template vars render to read-only AGENTS within 5s |
+| M07 | `m07-deploy-new-agent-e2e` | Workflow Automation | completed | M06 | engineering | `deploy_new_agent` full lifecycle validated with routed `stage_skill`, smoke runbook evidence, and strict verification |
+| M07b | `m07b-nanobot-runtime-migration` | Runtime Pivot | completed | M07 | engineering | Nanobot becomes canonical AGENT runtime with repo-local agent directories, updated deploy workflow assets, and strict verification |
+| M08 | `m08-context-injector` | Context Injection | planned | M07b | engineering | Template vars render to read-only AGENTS within 5s |
 | M09 | `m09-litellm-key-management` | Budgeting | planned | M08 | engineering | Virtual keys + cost ingestion persisted per node |
 | M10 | `m10-waterfall-budget-engine` | Budgeting | planned | M09 | engineering | Hierarchical allocation enforces strict child quotas |
 | M11 | `m11-master-skill-lifecycle` | Skills | planned | M10 | engineering | Validated skill deployment copied to agent `/skills` |
@@ -45,7 +46,7 @@ This compact checklist complements the detailed milestone plan above and is kept
 ### Phase 1: Foundation (Database and Physical OS)
 - [x] Step 1: Core database schema.
 - [x] Step 2: Linux user and workspace provisioning.
-- [x] Step 3: Nullclaw bootstrap and manual restricted execution.
+- [x] Step 3: Agent runtime bootstrap and manual restricted execution.
 
 ### Phase 2: Communication and Context (IPC and Templating)
 - [x] Step 4: Formal form daemon (P2P messaging + frontmatter parsing + routing).
@@ -60,7 +61,7 @@ This compact checklist complements the detailed milestone plan above and is kept
 - [ ] Step 9: Master skill library and validation lifecycle deployment.
 
 ### Phase 5: Managerial Operations and E2E
-- [ ] Step 10: Deployment approval workflow (`SPAWN_AGENT`).
+- [ ] Step 10: Deployment workflow (`deploy_new_agent`) E2E hardening and validation.
 - [ ] Step 11: Managerial supervision CAPA workflow (`UPDATE_TEMPLATE`).
 - [ ] Step 12: Budget request workflow.
 - [ ] Step 13: Constitution and core SOP package.
@@ -142,13 +143,39 @@ Acceptance criteria:
 - Invalid decisions are rejected with no partial writes.
 - MESSAGE lifecycle persistence is delegated to the shared state-machine path.
 
-### M07 - Approval action executors (`m07-approval-action-executors`)
+### M07 - Deploy workflow E2E hardening (`m07-deploy-new-agent-e2e`)
 Scope:
-- Approved `SPAWN_AGENT` triggers provisioning.
-- Approved `UPDATE_TEMPLATE` updates template and triggers refresh hook.
+- Harden `deploy_new_agent` full lifecycle handoff from `BUSINESS_CASE` to terminal archive.
+- Add kernel-managed routed frontmatter `stage_skill` metadata (`""` at terminal no-holder stage).
+- Standardize workspace form stage skill naming to hyphen convention.
+- Add deterministic integration coverage and operator live-smoke runbook assets.
+- Keep deployment action execution stage-owned (`deploy-new-claw-agent`), no kernel auto-provision trigger at approval edge.
 
 Acceptance criteria:
-- Both approval flows execute safely and atomically.
+- `stage_skill` present/correct on routed hops and empty on terminal archive.
+- Deterministic deploy lifecycle test passes end-to-end.
+- Live smoke runbook validates holder sequencing and archive evidence.
+- `UPDATE_TEMPLATE` workflow remains explicitly deferred from this change.
+
+### M07b - Nanobot runtime migration (`m07b-nanobot-runtime-migration`)
+Scope:
+- Replace Nullclaw as the canonical AGENT runtime with Nanobot.
+- Move AGENT provisioning from per-agent Linux users to repo-local directories under `workspace/agents/<agent_name>/`.
+- Migrate runtime metadata away from `nullclaw_config_path` and cross-user launch assumptions toward canonical Nanobot config/workspace inputs.
+- Rewrite canonical deployment assets around `deploy-new-nanobot` while keeping `deploy-new-claw-agent` as an optional legacy path.
+
+Acceptance criteria:
+- AGENT nodes can be provisioned without creating dedicated Linux users.
+- Runtime start/stop/status uses Nanobot-backed config/workspace inputs.
+- `deploy_new_agent` canonical workflow references `deploy-new-nanobot`.
+- Tests and operator smoke assets pass against the Nanobot directory contract.
+- `uv run pytest -q`
+- `openspec validate --type change m07b-nanobot-runtime-migration --strict`
+
+Implementation notes:
+- Alembic revision `20260306_0010` renames `nodes.nullclaw_config_path` to `nodes.runtime_config_path`.
+- Canonical AGENT directories now live at `workspace/agents/<agent_name>/{config.json,workspace/}`.
+- Verified CLI contract: `nanobot gateway` and `nanobot agent` accept explicit `-w/--workspace` and `-c/--config`; `nanobot status` still reports the default home instance only.
 
 ### M08 - Context injector (`m08-context-injector`)
 Scope:
@@ -252,6 +279,9 @@ Acceptance criteria:
 6. Long-horizon context drift
 - Mitigation: mandatory updates to `docs/plan.md`, `docs/documentation.md`, and trackers per milestone.
 
+7. Nanobot CLI/runtime contract drift
+- Mitigation: validate the installed Nanobot binary against the verified `/home/macos/.nanobot/` reference before freezing runtime command templates or smoke scripts.
+
 ## Demo Script (3-5 minutes)
 
 1. Show governance and traceability
@@ -309,7 +339,17 @@ Acceptance criteria:
 - 2026-03-04: Added kernel lifespan IPC auto-scan loop (default enabled, 5s interval) that executes the same routing path as `scan_forms`; confirmed live routing of `workspace/macos/outbox/pending/2026-03-04-macos-director-routing-smoke.md` to `Director_01`.
 - 2026-03-04: Updated `message` read-stage workflow back to explicit `WAITING_TO_BE_READ -> ARCHIVED` acknowledge decision and replaced read-stage SOP with single script tool `acknowledge_and_archive_message.py` (endpoint call + frontmatter stage update + unread->read move + master archive copy). Hardened `sync_form_types_from_workspace.py` prune logic to preserve versions still referenced by `forms_ledger`.
 - 2026-03-05: Archived change `m06-forms-ledger-state-machine` as `2026-03-05-m06-forms-ledger-state-machine` (spec sync was skipped during archive due delta header mismatch in upstream OpenSpec auto-sync).
+- 2026-03-06: Created active change `m07b-nanobot-runtime-migration` after deciding to replace the Nullclaw + per-agent Linux-user model with Nanobot repo-local agent directories. Repo review identified the main impact in node runtime metadata, provisioning/runtime services, deploy-stage skill packages, and operator/reference documentation.
+- 2026-03-06: Implemented the Nanobot schema/runtime pivot core: renamed node runtime metadata to `runtime_config_path`, moved AGENT provisioning to repo-local `workspace/agents/<agent_name>/workspace`, and added Nanobot config scaffolding with targeted schema/runtime/provisioning tests passing (`20 passed`).
+- 2026-03-06: Switched the canonical `deploy_new_agent` stage skill to `deploy-new-nanobot`, rewrote the Nanobot deployment skill package, and retargeted the deploy smoke runner to explicit `nanobot agent/gateway -w -c` invocations instead of Linux-user `nullclaw` execution.
+- 2026-03-06: Implemented the core M07b schema/runtime pivot: `runtime_config_path` replaced `nullclaw_config_path`, AGENT provisioning now scaffolds repo-local Nanobot directories under `workspace/agents/<agent_name>/`, gateway commands use explicit Nanobot `--workspace/--config` inputs, and Alembic migration `20260306_0010` preserves existing config-path data.
+- 2026-03-06: Rewrote the canonical `deploy-new-nanobot` stage skill, added `scripts/provisioning/deploy_new_nanobot_agent.sh`, updated deploy workflow/IPC tests to target `deploy-new-nanobot`, and retargeted the deploy smoke runner away from `sudo -u ... nullclaw`.
+- 2026-03-06: Reprovisioned the canonical sample agents (`Director_01`, `HR_Head_01`, `Ops_Head_01`) into `workspace/agents/...`, synced the active `deploy_new_agent` workflow from workspace so `deploy-new-nanobot` is the routed stage skill, fixed Nanobot deploy/smoke helper gaps (`init_nanobot_config.py` import bootstrap, local workspace scaffold creation, final archive assertions), and completed an apply-mode deploy smoke against the repo-local Nanobot directories.
+- 2026-03-06: Archived `m07b-nanobot-runtime-migration` as `2026-03-06-m07b-nanobot-runtime-migration`, synced delta specs into the main OpenSpec tree (`agent-runtime-bootstrap`, `linux-provisioning`, `deploy-new-agent-workflow`), reran strict validation, and reconfirmed local reprovisioning by recreating `Signal_Cartographer_01` through the live kernel endpoint with a successful Nanobot `hello` smoke.
 - 2026-03-05: Implemented hardening change `hardening-runtime-ipc-core`: strict runtime host validation, safer gateway command rendering, bounded IPC scan traversal with event-loop offload, `forms_ledger.version` optimistic lock migration (`20260305_0008`), deterministic transition conflict mapping, and startup migration-head enforcement (no runtime `create_all` path). Regression suite updated and passing (`46 passed`).
 - 2026-03-05: Archived change `hardening-runtime-ipc-core` as `2026-03-05-hardening-runtime-ipc-core`; synced new/updated specs including `runtime-ipc-hardening`.
 - 2026-03-05: Implemented change `ipc-invalid-feedback-and-dedupe`: undelivered forms now dead-letter once, kernel emits structured feedback artifacts (`target` first with sender fallback), IPC response includes `dead_letter_path`/`feedback_path`, added replay script `scripts/ipc/requeue_dead_letter.sh`, and deduped node resolver + manager-link repository logic.
 - 2026-03-05: Archived change `ipc-invalid-feedback-and-dedupe` as `2026-03-05-ipc-invalid-feedback-and-dedupe`; synced specs `ipc-invalid-feedback-routing`, `file-ipc-router`, and `canonical-state-schema`.
+- 2026-03-05: Added endpoint `POST /v1/forms/workspace/sync` to scan `workspace/forms/*/workflow.json`, validate targets/skills against current node registry and master skill copies, then upsert/activate changed definitions in `form_types` while keeping workflow graph in DB for runtime lookup. Added integration coverage in `tests/test_forms_actions.py`; full suite passing (`50 passed`).
+- 2026-03-05: Opened M07 change `m07-deploy-new-agent-e2e` and authored proposal/design/spec/tasks focused on `deploy_new_agent` E2E validation, routed `stage_skill` metadata, hyphen skill naming, and live smoke assets; deferred `UPDATE_TEMPLATE` explicitly.
+- 2026-03-05: Implemented routed `stage_skill` write/overwrite behavior in IPC, added full-cycle deploy IPC integration coverage, migrated workspace form `required_skill` names/folders to hyphen convention, added deploy-stage director-seed config template + SOP updates, and introduced `scripts/forms/smoke_deploy_new_agent_e2e.sh` runbook.

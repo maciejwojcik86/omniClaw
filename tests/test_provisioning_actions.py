@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import sys
 
@@ -54,13 +55,15 @@ def test_register_human_in_mock_mode_creates_human_node_and_workspace(tmp_path: 
     assert payload["node"]["name"] == "Macos_Supervisor"
     assert payload["node"]["linux_username"] == "macos"
     assert payload["node"]["workspace_root"] == str(workspace_root.resolve())
+    assert payload["node"]["runtime_config_path"] == "/home/macos/.nanobot/config.json"
     assert payload["line_management"]["subordinate_count"] == 0
     assert payload["line_management"]["has_subordinate"] is False
 
 
 def test_provision_agent_in_mock_mode_updates_nodes_and_hierarchy(tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'provisioning.db'}"
-    missing_config_path = tmp_path / "missing-config.json"
+    workspace_root = tmp_path / "workspace" / "agents" / "Director_01" / "workspace"
+    expected_config_path = workspace_root.parent / "config.json"
 
     settings = Settings(
         app_name="omniclaw-kernel",
@@ -90,13 +93,12 @@ def test_provision_agent_in_mock_mode_updates_nodes_and_hierarchy(tmp_path: Path
             "shell": "/bin/bash",
             "groups": ["sudo"],
             "workspace": {
-                "root": "/home/agent_director_01/workspace",
+                "root": str(workspace_root),
                 "scaffold": True,
             },
             "manager_group": "sudo",
             "manager_node_id": manager.id,
             "autonomy_level": 3,
-            "nullclaw_config_path": str(missing_config_path),
         },
     )
 
@@ -104,22 +106,25 @@ def test_provision_agent_in_mock_mode_updates_nodes_and_hierarchy(tmp_path: Path
     payload = response.json()
 
     assert payload["mode"] == "mock"
-    assert payload["user"]["username"] == "agent_director_01"
-    assert payload["user"]["created"] is True
-    assert payload["user"]["uid"] is not None
+    assert "user" not in payload
     assert payload["node"]["name"] == "Director_01"
     assert payload["node"]["status"] == NodeStatus.ACTIVE.value
     assert payload["node"]["autonomy_level"] == 3
     assert payload["node"]["linux_username"] == "agent_director_01"
-    assert payload["node"]["workspace_root"] == "/home/agent_director_01/workspace"
-    assert payload["node"]["nullclaw_config_path"] == str(missing_config_path.resolve())
-    assert payload["node"]["primary_model"] is None
+    assert payload["node"]["workspace_root"] == str(workspace_root.resolve())
+    assert payload["node"]["runtime_config_path"] == str(expected_config_path.resolve())
+    assert payload["node"]["primary_model"] == "openai-codex/gpt-5.4"
     assert payload["node"]["password_present"] is False
+    assert payload["runtime_config"]["path"] == str(expected_config_path.resolve())
+    assert payload["runtime_config"]["created"] is True
+    assert expected_config_path.exists()
+    written_config = json.loads(expected_config_path.read_text(encoding="utf-8"))
+    assert written_config["agents"]["defaults"]["workspace"] == str(workspace_root.resolve())
 
     operations = payload.get("operations", [])
-    assert any(operation["step"] == "ensure_user" for operation in operations)
     assert any(operation["step"] == "ensure_workspace" for operation in operations)
-    assert any(operation["step"] == "apply_permissions" for operation in operations)
+    assert all(operation["step"] != "ensure_user" for operation in operations)
+    assert all(operation["step"] != "apply_permissions" for operation in operations)
 
     children = repository.list_children(parent_node_id=manager.id)
     assert len(children) == 1
@@ -154,7 +159,9 @@ def test_system_mode_is_blocked_when_privileged_flag_disabled(tmp_path: Path) ->
 
 def test_provision_agent_syncs_model_and_plain_password(tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'sync.db'}"
-    config_path = tmp_path / "director-config.json"
+    workspace_root = tmp_path / "workspace" / "agents" / "Director_01" / "workspace"
+    config_path = workspace_root.parent / "config.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
         (
             "{\n"
@@ -190,10 +197,10 @@ def test_provision_agent_syncs_model_and_plain_password(tmp_path: Path) -> None:
             "username": "agent_director_01",
             "node_name": "Director_01",
             "workspace": {
-                "root": "/home/agent_director_01/.nullclaw/workspace",
+                "root": str(workspace_root),
                 "scaffold": True,
             },
-            "nullclaw_config_path": str(config_path),
+            "runtime_config_path": str(config_path),
             "linux_password": "haslo",
             "autonomy_level": 3,
             "manager_node_id": manager.id,
@@ -216,13 +223,57 @@ def test_provision_agent_syncs_model_and_plain_password(tmp_path: Path) -> None:
         assert node is not None
         assert node.primary_model == "openai-codex/gpt-5.3-codex"
         assert node.linux_username == "agent_director_01"
-        assert node.workspace_root == "/home/agent_director_01/.nullclaw/workspace"
-        assert node.nullclaw_config_path == str(config_path.resolve())
+        assert node.workspace_root == str(workspace_root.resolve())
+        assert node.runtime_config_path == str(config_path.resolve())
         assert node.linux_password == "haslo"
+
+
+def test_provision_agent_allows_node_name_without_linux_username(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'node-name-only.db'}"
+    workspace_root = tmp_path / "workspace" / "agents" / "Planner_01" / "workspace"
+
+    settings = Settings(
+        app_name="omniclaw-kernel",
+        environment="test",
+        log_level="INFO",
+        database_url=database_url,
+        provisioning_mode="mock",
+        allow_privileged_provisioning=False,
+    )
+    migrate_database_to_head(database_url)
+    app = create_app(settings)
+    repository = KernelRepository(create_session_factory(database_url))
+    manager = repository.create_node(
+        node_type=NodeType.HUMAN,
+        name="Human_Supervisor_01",
+        status=NodeStatus.ACTIVE,
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/provisioning/actions",
+        json={
+            "action": "provision_agent",
+            "node_name": "Planner_01",
+            "manager_node_id": manager.id,
+            "workspace": {
+                "root": str(workspace_root),
+                "scaffold": True,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["node"]["name"] == "Planner_01"
+    assert payload["node"]["linux_username"] is None
+    assert payload["node"]["workspace_root"] == str(workspace_root.resolve())
+    assert payload["node"]["runtime_config_path"] == str((workspace_root.parent / "config.json").resolve())
 
 
 def test_provision_agent_requires_manager_reference(tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'manager-required.db'}"
+    workspace_root = tmp_path / "workspace" / "agents" / "Director_01" / "workspace"
     settings = Settings(
         app_name="omniclaw-kernel",
         environment="test",
@@ -242,7 +293,7 @@ def test_provision_agent_requires_manager_reference(tmp_path: Path) -> None:
             "username": "agent_director_01",
             "node_name": "Director_01",
             "workspace": {
-                "root": "/home/agent_director_01/.nullclaw/workspace",
+                "root": str(workspace_root),
                 "scaffold": True,
             },
         },
@@ -253,6 +304,7 @@ def test_provision_agent_requires_manager_reference(tmp_path: Path) -> None:
 
 def test_provision_agent_accepts_agent_manager(tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'agent-manager.db'}"
+    workspace_root = tmp_path / "workspace" / "agents" / "Worker_01" / "workspace"
     settings = Settings(
         app_name="omniclaw-kernel",
         environment="test",
@@ -279,7 +331,7 @@ def test_provision_agent_accepts_agent_manager(tmp_path: Path) -> None:
             "node_name": "Worker_01",
             "manager_node_id": manager_agent.id,
             "workspace": {
-                "root": "/home/agent_worker_01/.nullclaw/workspace",
+                "root": str(workspace_root),
                 "scaffold": True,
             },
         },
@@ -293,6 +345,7 @@ def test_provision_agent_accepts_agent_manager(tmp_path: Path) -> None:
 
 def test_provision_agent_rejects_second_manager_for_same_node(tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'single-manager.db'}"
+    workspace_root = tmp_path / "workspace" / "agents" / "Director_01" / "workspace"
     settings = Settings(
         app_name="omniclaw-kernel",
         environment="test",
@@ -325,7 +378,7 @@ def test_provision_agent_rejects_second_manager_for_same_node(tmp_path: Path) ->
             "node_name": "Director_01",
             "manager_node_id": manager_one.id,
             "workspace": {
-                "root": "/home/agent_director_01/.nullclaw/workspace",
+                "root": str(workspace_root),
                 "scaffold": True,
             },
         },
@@ -340,7 +393,7 @@ def test_provision_agent_rejects_second_manager_for_same_node(tmp_path: Path) ->
             "node_name": "Director_01",
             "manager_node_id": manager_two.id,
             "workspace": {
-                "root": "/home/agent_director_01/.nullclaw/workspace",
+                "root": str(workspace_root),
                 "scaffold": True,
             },
         },

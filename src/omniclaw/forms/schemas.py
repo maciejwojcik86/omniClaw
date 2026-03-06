@@ -39,3 +39,10 @@ class FormsActionRequest(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
     payload: dict[str, Any] | None = None
     set_fields: dict[str, Any] | None = None
+
+
+class FormsWorkspaceSyncRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    prune_missing: bool = False
+    activate: bool = True

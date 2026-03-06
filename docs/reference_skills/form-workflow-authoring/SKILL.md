@@ -70,14 +70,14 @@ form_id: message-2026-03-04-001
   "stages": {
     "DRAFT": {
       "target": "{{initiator}}",
-      "required_skill": "draft_example_form",
+      "required_skill": "draft-example-form",
       "decisions": {
         "submit": "REVIEW"
       }
     },
     "REVIEW": {
       "target": "Reviewer_Node",
-      "required_skill": "review_example_form",
+      "required_skill": "review-example-form",
       "decisions": {
         "approve": "ARCHIVED",
         "return": "DRAFT"
@@ -239,14 +239,14 @@ scripts/forms/trigger_forms_action.sh --apply \
   "stages": {
     "DRAFT": {
       "target": "{{initiator}}",
-      "required_skill": "draft_internal_message",
+      "required_skill": "draft-internal-message",
       "decisions": {
         "send": "WAITING_TO_BE_READ"
       }
     },
     "WAITING_TO_BE_READ": {
       "target": "{{any}}",
-      "required_skill": "read_and_acknowledge_internal_message",
+      "required_skill": "read-and-acknowledge-internal-message",
       "decisions": {
         "acknowledge_read": "ARCHIVED"
       }
@@ -276,14 +276,14 @@ Design notes:
   "stages": {
     "BUSINESS_CASE": {
       "target": "{{initiator}}",
-      "required_skill": "draft_agent_business_case",
+      "required_skill": "draft-agent-business-case",
       "decisions": {
         "submit_to_hr": "HR_REVIEW"
       }
     },
     "HR_REVIEW": {
       "target": "Department_Head_HR",
-      "required_skill": "review_agent_role_and_template",
+      "required_skill": "review-agent-role-and-template",
       "decisions": {
         "approve_to_finance": "FINANCE_REVIEW",
         "return_to_initiator": "BUSINESS_CASE"
@@ -291,7 +291,7 @@ Design notes:
     },
     "FINANCE_REVIEW": {
       "target": "Department_Head_Finance",
-      "required_skill": "allocate_agent_budget",
+      "required_skill": "allocate-agent-budget",
       "decisions": {
         "approve_to_director": "DIRECTOR_APPROVAL",
         "return_to_hr": "HR_REVIEW"
@@ -299,7 +299,7 @@ Design notes:
     },
     "DIRECTOR_APPROVAL": {
       "target": "Agent_000_Director",
-      "required_skill": "final_agent_signoff",
+      "required_skill": "final-agent-signoff",
       "decisions": {
         "execute_deployment": "AGENT_DEPLOYMENT",
         "return_to_finance": "FINANCE_REVIEW",
@@ -308,14 +308,14 @@ Design notes:
     },
     "AGENT_DEPLOYMENT": {
       "target": "HR_Agent_Spawner",
-      "required_skill": "deploy_new_claw_agent_stage",
+      "required_skill": "deploy-new-claw-agent",
       "decisions": {
         "deploy_and_archive": "ARCHIVED"
       }
     },
     "ARCHIVED": {
       "target": "HR_Archiver",
-      "required_skill": "archive_agent_deployment_form",
+      "required_skill": "archive-agent-deployment-form",
       "is_terminal": true
     }
   }

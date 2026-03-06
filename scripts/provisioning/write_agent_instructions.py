@@ -18,10 +18,12 @@ DEFAULT_TEMPLATE = """# AGENTS.md
 
 ## Working Rules
 - Read `inbox/unread` first, then active manager requests.
-- Treat `SOUL.md`, `USER.md`, `IDENTITY.md`, and `BOOTSTRAP.md` as core context files.
+- Treat `SOUL.md`, `USER.md`, `TOOLS.md`, `memory/MEMORY.md`, and `memory/HISTORY.md` as durable context files.
+- Follow `HEARTBEAT.md` exactly when a heartbeat cycle is requested.
 - Update context files only when explicitly instructed by manager/kernel policy.
 - Escalate blockers early with clear options.
-- Do not change permissions or access controls directly.
+- Do not change permissions, gateway bindings, or access controls directly.
+- Keep execution inside this workspace and its `skills/` folder.
 
 ## Budget Awareness
 - Prefer low-cost model strategy by default.
@@ -30,6 +32,7 @@ DEFAULT_TEMPLATE = """# AGENTS.md
 ## Completion Standard
 - Output is reproducible and traceable.
 - Keep manager-visible progress clear in deliverables and required context files.
+- Leave `inbox/unread` empty after handling routed forms and archive outcomes through the workflow.
 """
 
 

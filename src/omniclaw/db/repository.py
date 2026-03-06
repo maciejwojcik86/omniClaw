@@ -11,8 +11,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm.exc import StaleDataError
 
-from omniclaw.db.enums import FormStatus, FormTypeLifecycle, NodeStatus, NodeType, RelationshipType
-from omniclaw.db.models import FormLedger, FormTransitionEvent, FormTypeDefinition, Hierarchy, Node
+from omniclaw.db.enums import (
+    FormStatus,
+    FormTypeLifecycle,
+    NodeStatus,
+    NodeType,
+    RelationshipType,
+    SkillValidationStatus,
+)
+from omniclaw.db.models import FormLedger, FormTransitionEvent, FormTypeDefinition, Hierarchy, MasterSkill, Node
 
 
 class TransitionConflictError(RuntimeError):
@@ -33,7 +40,7 @@ class KernelRepository:
         linux_username: str | None = None,
         linux_password: str | None = None,
         workspace_root: str | None = None,
-        nullclaw_config_path: str | None = None,
+        runtime_config_path: str | None = None,
         primary_model: str | None = None,
         autonomy_level: int = 0,
     ) -> Node:
@@ -46,7 +53,7 @@ class KernelRepository:
                 linux_username=linux_username,
                 linux_password=linux_password,
                 workspace_root=workspace_root,
-                nullclaw_config_path=nullclaw_config_path,
+                runtime_config_path=runtime_config_path,
                 primary_model=primary_model,
                 autonomy_level=autonomy_level,
             )
@@ -65,7 +72,7 @@ class KernelRepository:
         linux_username: str | None = None,
         linux_password: str | None = None,
         workspace_root: str | None = None,
-        nullclaw_config_path: str | None = None,
+        runtime_config_path: str | None = None,
         primary_model: str | None = None,
         autonomy_level: int = 0,
     ) -> tuple[Node, bool]:
@@ -83,7 +90,7 @@ class KernelRepository:
                 if linux_password is not None:
                     existing.linux_password = linux_password
                 existing.workspace_root = workspace_root
-                existing.nullclaw_config_path = nullclaw_config_path
+                existing.runtime_config_path = runtime_config_path
                 existing.primary_model = primary_model
                 existing.autonomy_level = autonomy_level
                 session.commit()
@@ -98,7 +105,7 @@ class KernelRepository:
                 linux_username=linux_username,
                 linux_password=linux_password,
                 workspace_root=workspace_root,
-                nullclaw_config_path=nullclaw_config_path,
+                runtime_config_path=runtime_config_path,
                 primary_model=primary_model,
                 autonomy_level=autonomy_level,
             )
@@ -370,6 +377,17 @@ class KernelRepository:
             session.commit()
             return True
 
+    def count_form_instances_for_type_version(self, *, type_key: str, version: str) -> int:
+        with self._session_factory() as session:
+            return (
+                session.query(FormLedger)
+                .filter(
+                    FormLedger.form_type_key == type_key,
+                    FormLedger.form_type_version == version,
+                )
+                .count()
+            )
+
     def ensure_builtin_message_form_type(self) -> FormTypeDefinition:
         active = self.get_form_type_definition(type_key="message", active_only=True)
         if active is not None:
@@ -411,6 +429,68 @@ class KernelRepository:
             workflow_graph=workflow_graph,
             stage_metadata=stage_metadata,
         )
+
+    # ---------------------------------------------------------------------
+    # Master skill catalog operations
+    # ---------------------------------------------------------------------
+
+    def upsert_master_skill(
+        self,
+        *,
+        name: str,
+        form_type_key: str | None,
+        master_path: str,
+        description: str | None,
+        version: str,
+        validation_status: SkillValidationStatus = SkillValidationStatus.VALIDATED,
+    ) -> MasterSkill:
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise ValueError("master skill name is required")
+
+        normalized_path = master_path.strip()
+        if not normalized_path:
+            raise ValueError(f"master skill '{normalized_name}' path is required")
+
+        normalized_form_type_key = form_type_key.strip() if isinstance(form_type_key, str) else None
+        if normalized_form_type_key == "":
+            normalized_form_type_key = None
+        normalized_description = description.strip() if isinstance(description, str) and description.strip() else None
+        normalized_version = version.strip() if isinstance(version, str) and version.strip() else "1.0.0"
+
+        with self._session_factory() as session:
+            existing = (
+                session.query(MasterSkill)
+                .filter(MasterSkill.name == normalized_name)
+                .order_by(MasterSkill.created_at.asc())
+                .first()
+            )
+            if existing is None:
+                existing = MasterSkill(
+                    name=normalized_name,
+                    form_type_key=normalized_form_type_key,
+                    master_path=normalized_path,
+                    description=normalized_description,
+                    version=normalized_version,
+                    validation_status=validation_status,
+                )
+                session.add(existing)
+            else:
+                existing.form_type_key = normalized_form_type_key
+                existing.master_path = normalized_path
+                existing.description = normalized_description
+                existing.version = normalized_version
+                existing.validation_status = validation_status
+            session.commit()
+            session.refresh(existing)
+            return existing
+
+    def list_master_skills(self, *, form_type_key: str | None = None) -> list[MasterSkill]:
+        with self._session_factory() as session:
+            query = session.query(MasterSkill)
+            if form_type_key is not None:
+                query = query.filter(MasterSkill.form_type_key == form_type_key)
+            return query.order_by(MasterSkill.name.asc(), MasterSkill.created_at.asc()).all()
 
     # ---------------------------------------------------------------------
     # Form ledger and transition events

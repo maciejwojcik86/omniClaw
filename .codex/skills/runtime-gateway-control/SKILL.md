@@ -1,6 +1,6 @@
 ---
 name: runtime-gateway-control
-description: Control deployed agent Nullclaw gateways via kernel runtime endpoints (start, stop, status, list) and verify DB running-state tracking. Use when operators or delegated automation need to enable/disable agent runtime.
+description: Control deployed agent Nanobot gateways via kernel runtime endpoints (start, stop, status, list) and verify DB running-state tracking. Use when operators or delegated automation need to enable/disable agent runtime.
 license: MIT
 compatibility: Linux host, Python 3.11+, running OmniClaw kernel API
 metadata:
@@ -29,7 +29,7 @@ Required:
 Optional:
 - `kernel_url` (default `http://127.0.0.1:8000`)
 - `gateway_host` (default `127.0.0.1`)
-- `gateway_port` (default `3000`)
+- `gateway_port` (default `18790`)
 - `force_restart` for `gateway_start`
 
 Host validation:
@@ -48,7 +48,7 @@ Host validation:
 2. Dry-run smoke sequence:
    - `./scripts/smoke_gateway_control.sh --node-name Director_01`
 3. Apply smoke sequence:
-   - `./scripts/smoke_gateway_control.sh --apply --node-name Director_01 --gateway-port 3000`
+   - `./scripts/smoke_gateway_control.sh --apply --node-name Director_01 --gateway-port 18790`
 4. Verify DB/runtime state:
    - `./scripts/provisioning/list_agents_permissions.py --database /home/macos/omniClaw/workspace/omniclaw.db`
 

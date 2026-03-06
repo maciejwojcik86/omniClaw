@@ -1,9 +1,12 @@
+import os
 from pathlib import Path
 import sys
 import time
 import json
+import shutil
 import stat
 import subprocess
+import threading
 
 from fastapi.testclient import TestClient
 
@@ -20,6 +23,7 @@ from omniclaw.db.models import FormLedger, FormTransitionEvent
 from omniclaw.db.repository import KernelRepository
 from omniclaw.db.session import create_session_factory
 from omniclaw.forms.service import FormsService
+from omniclaw.ipc.schemas import IpcActionRequest
 from omniclaw.ipc.service import IpcRouterService
 from tests.helpers import migrate_database_to_head
 
@@ -78,6 +82,7 @@ def _write_generic_form_file(
     stage: str,
     decision: str,
     target: str | None,
+    stage_skill: str | None = None,
     subject: str | None = None,
     use_legacy_transition_field: bool = False,
 ) -> None:
@@ -88,6 +93,8 @@ def _write_generic_form_file(
         f"stage: {stage}",
         f"{decision_field}: {decision}",
     ]
+    if stage_skill is not None:
+        frontmatter.append(f"stage_skill: {stage_skill}")
     if target is not None:
         frontmatter.append(f"target: {target}")
     if subject is not None:
@@ -95,6 +102,47 @@ def _write_generic_form_file(
     frontmatter.append("---")
     payload = "\n".join(frontmatter) + "\n\nHello from OmniClaw.\n"
     queue_file.write_text(payload, encoding="utf-8")
+
+
+def _parse_frontmatter_content(content: str) -> tuple[dict[str, str], str]:
+    if not content.startswith("---\n"):
+        raise AssertionError("expected markdown frontmatter opening delimiter")
+    lines = content.splitlines()
+    if not lines or lines[0].strip() != "---":
+        raise AssertionError("invalid frontmatter opening delimiter")
+
+    closing_index: int | None = None
+    for index in range(1, len(lines)):
+        if lines[index].strip() == "---":
+            closing_index = index
+            break
+    if closing_index is None:
+        raise AssertionError("missing frontmatter closing delimiter")
+
+    frontmatter: dict[str, str] = {}
+    for line in lines[1:closing_index]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if ":" not in stripped:
+            raise AssertionError(f"invalid frontmatter line: '{line}'")
+        key, value = stripped.split(":", 1)
+        frontmatter[key.strip()] = value.strip().strip('"').strip("'")
+
+    body = "\n".join(lines[closing_index + 1 :])
+    return frontmatter, body
+
+
+def _load_frontmatter(path: Path) -> tuple[dict[str, str], str]:
+    return _parse_frontmatter_content(path.read_text(encoding="utf-8"))
+
+
+def _render_with_frontmatter(*, frontmatter: dict[str, str], body: str) -> str:
+    lines = ["---"]
+    for key, value in frontmatter.items():
+        lines.append(f"{key}: {value}")
+    lines.append("---")
+    return "\n".join(lines) + "\n\n" + body.rstrip("\n") + "\n"
 
 
 def test_ipc_scan_routes_authorized_message_within_target_window(tmp_path: Path) -> None:
@@ -161,6 +209,7 @@ def test_ipc_scan_routes_authorized_message_within_target_window(tmp_path: Path)
     assert bool(archived.stat().st_mode & stat.S_IWGRP)
     delivered_text = delivered.read_text(encoding="utf-8")
     assert "decision:" in delivered_text
+    assert "stage_skill: read-and-acknowledge-internal-message" in delivered_text
     assert "transition:" not in delivered_text
     assert "initiator_node_id:" not in delivered_text
     assert "target_node_id:" not in delivered_text
@@ -173,9 +222,103 @@ def test_ipc_scan_routes_authorized_message_within_target_window(tmp_path: Path)
         assert form.type == "message"
         assert form.form_type_key == "message"
         assert form.current_status == FormStatus.WAITING_TO_BE_READ.value
+
+
+def test_ipc_scan_claims_pending_form_under_concurrent_scans(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'ipc-concurrent-route.db'}"
+    worker_workspace = tmp_path / "worker-workspace"
+    manager_workspace = tmp_path / "manager-workspace"
+    _ensure_workspace_dirs(worker_workspace)
+    _ensure_workspace_dirs(manager_workspace)
+
+    settings = Settings(
+        app_name="omniclaw-kernel",
+        environment="test",
+        log_level="INFO",
+        database_url=database_url,
+        provisioning_mode="mock",
+        allow_privileged_provisioning=False,
+    )
+    migrate_database_to_head(database_url)
+    repository = KernelRepository(create_session_factory(database_url))
+    manager = repository.create_node(
+        node_type=NodeType.HUMAN,
+        name="Manager_Concurrent_01",
+        status=NodeStatus.ACTIVE,
+        workspace_root=str(manager_workspace.resolve()),
+    )
+    worker = repository.create_node(
+        node_type=NodeType.AGENT,
+        name="Worker_Concurrent_01",
+        status=NodeStatus.ACTIVE,
+        workspace_root=str(worker_workspace.resolve()),
+    )
+    repository.link_manager(parent_node_id=manager.id, child_node_id=worker.id)
+
+    queue_file = worker_workspace / "outbox" / "pending" / "status-update.md"
+    _write_message_file(
+        queue_file=queue_file,
+        sender="Worker_Concurrent_01",
+        target="Manager_Concurrent_01",
+        subject="Concurrent status",
+    )
+
+    service = IpcRouterService(settings=settings, repository=repository)
+    barrier = threading.Barrier(2)
+    results: list[dict[str, object] | None] = [None, None]
+    errors: list[Exception | None] = [None, None]
+
+    def run_scan(index: int) -> None:
+        try:
+            barrier.wait(timeout=5)
+            results[index] = service.execute(IpcActionRequest(action="scan_forms"))
+        except Exception as exc:  # pragma: no cover - failure path asserted below
+            errors[index] = exc
+
+    first = threading.Thread(target=run_scan, args=(0,))
+    second = threading.Thread(target=run_scan, args=(1,))
+    first.start()
+    second.start()
+    first.join(timeout=10)
+    second.join(timeout=10)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert errors == [None, None]
+    assert results[0] is not None
+    assert results[1] is not None
+
+    total_scanned = sum(int(result["summary"]["scanned"]) for result in results if result is not None)
+    total_routed = sum(int(result["summary"]["routed"]) for result in results if result is not None)
+    total_undelivered = sum(int(result["summary"]["undelivered"]) for result in results if result is not None)
+    assert total_scanned == 1
+    assert total_routed == 1
+    assert total_undelivered == 0
+
+    delivered = manager_workspace / "inbox" / "unread" / "status-update.md"
+    archived = worker_workspace / "outbox" / "archive" / "status-update.md"
+    assert delivered.exists()
+    assert archived.exists()
+    assert queue_file.exists() is False
+
+    session_factory = create_session_factory(database_url)
+    with session_factory() as session:
+        form = session.query(FormLedger).filter(FormLedger.message_name == "status-update.md").one_or_none()
+        assert form is not None
+        assert form.current_status == FormStatus.WAITING_TO_BE_READ.value
+        events = (
+            session.query(FormTransitionEvent)
+            .filter(FormTransitionEvent.form_id == form.form_id)
+            .order_by(FormTransitionEvent.sequence.asc())
+            .all()
+        )
+        assert [event.to_status for event in events] == [
+            FormStatus.DRAFT.value,
+            FormStatus.WAITING_TO_BE_READ.value,
+        ]
         assert form.sender_node_id == worker.id
         assert form.target_node_id == manager.id
-        assert form.subject == "Daily status"
+        assert form.subject == "Concurrent status"
         assert form.delivery_path is not None
         assert form.archive_path is not None
 
@@ -295,6 +438,7 @@ def test_ipc_scan_accepts_legacy_frontmatter_transition_field(tmp_path: Path) ->
     assert delivered.exists()
     delivered_text = delivered.read_text(encoding="utf-8")
     assert "decision:" in delivered_text
+    assert "stage_skill: read-and-acknowledge-internal-message" in delivered_text
     assert "transition:" not in delivered_text
 
 
@@ -428,6 +572,8 @@ def test_ipc_scan_uses_active_custom_form_type_definition(tmp_path: Path, monkey
     delivered = target_workspace / "inbox" / "unread" / "custom-message.md"
     read_copy = target_workspace / "inbox" / "read" / "custom-message.md"
     assert delivered.exists()
+    delivered_frontmatter, _ = _load_frontmatter(delivered)
+    assert delivered_frontmatter["stage_skill"] == "read_and_acknowledge_internal_message"
     delivered.rename(read_copy)
 
     ack_response = client.post(
@@ -446,6 +592,332 @@ def test_ipc_scan_uses_active_custom_form_type_definition(tmp_path: Path, monkey
     assert ack_response.status_code == 200
     assert ack_response.json()["form"]["current_status"] == "READ_ARCHIVED"
     assert ack_response.json()["form"]["current_holder_node"] is None
+
+
+def test_ipc_scan_routes_deploy_new_agent_full_stage_cycle(tmp_path: Path, monkeypatch) -> None:
+    workspace_root = tmp_path / "workspace"
+    forms_root = workspace_root / "forms" / "deploy_new_agent"
+    skills_root = forms_root / "skills"
+    archive_root = workspace_root / "form_archive"
+    skill_descriptions = {
+        "draft-agent-business-case": "Draft BUSINESS_CASE details for deployment request.",
+        "review-agent-role-and-template": (
+            "Perform HR_REVIEW for deploy_new_agent forms and decide whether to move to finance or return for "
+            "revision."
+        ),
+        "allocate-agent-budget": (
+            "Perform FINANCE_REVIEW for deploy_new_agent and decide whether budget is approved or returned to HR."
+        ),
+        "final-agent-signoff": (
+            "Execute DIRECTOR_APPROVAL for deploy_new_agent and choose deployment, rework, or rejection."
+        ),
+        "deploy-new-nanobot": (
+            "Deploy a repo-local Nanobot agent under workspace/agents/<agent_name>/ with sibling config.json, "
+            "workspace scaffold, AGENTS.md instructions, kernel provisioning trigger, and Nanobot smoke commands."
+        ),
+    }
+    for skill_name, skill_description in skill_descriptions.items():
+        skill_dir = skills_root / skill_name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(
+            (
+                "---\n"
+                f"name: {skill_name}\n"
+                f"description: {skill_description}\n"
+                "---\n\n"
+                "# skill\n"
+            ),
+            encoding="utf-8",
+        )
+        if skill_name == "deploy-new-nanobot":
+            source_skill_dir = (
+                ROOT / "workspace" / "forms" / "deploy_new_agent" / "skills" / "deploy-new-nanobot"
+            )
+            for child in source_skill_dir.iterdir():
+                if child.name == "SKILL.md":
+                    continue
+                destination = skill_dir / child.name
+                if child.is_dir():
+                    shutil.copytree(child, destination, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(child, destination)
+
+    workflow_payload = {
+        "form_type": "deploy_new_agent",
+        "version": "9.9.9",
+        "description": "Deploy workflow fixture",
+        "start_stage": "BUSINESS_CASE",
+        "end_stage": "ARCHIVED",
+        "stages": {
+            "BUSINESS_CASE": {
+                "target": "{{initiator}}",
+                "required_skill": "draft-agent-business-case",
+                "decisions": {"submit_to_hr": "HR_REVIEW"},
+            },
+            "HR_REVIEW": {
+                "target": "HR_Head_01",
+                "required_skill": "review-agent-role-and-template",
+                "decisions": {"approve_to_finance": "FINANCE_REVIEW"},
+            },
+            "FINANCE_REVIEW": {
+                "target": "Macos_Supervisor",
+                "required_skill": "allocate-agent-budget",
+                "decisions": {"approve_to_director": "DIRECTOR_APPROVAL"},
+            },
+            "DIRECTOR_APPROVAL": {
+                "target": "Director_01",
+                "required_skill": "final-agent-signoff",
+                "decisions": {"execute_deployment": "AGENT_DEPLOYMENT"},
+            },
+            "AGENT_DEPLOYMENT": {
+                "target": "Ops_Head_01",
+                "required_skill": "deploy-new-nanobot",
+                "decisions": {"deploy_and_archive": "ARCHIVED"},
+            },
+            "ARCHIVED": {
+                "target": None,
+                "is_terminal": True,
+            },
+        },
+    }
+    forms_root.mkdir(parents=True, exist_ok=True)
+    (forms_root / "workflow.json").write_text(json.dumps(workflow_payload, indent=2) + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(FormsService, "_workspace_root", lambda self: workspace_root)
+    monkeypatch.setattr(FormsService, "_workspace_forms_root", lambda self: workspace_root / "forms")
+    monkeypatch.setattr(IpcRouterService, "_workspace_forms_root", lambda self: workspace_root / "forms")
+    monkeypatch.setattr(IpcRouterService, "_workspace_form_archive_root", lambda self: archive_root)
+
+    database_url = f"sqlite:///{tmp_path / 'ipc-deploy-new-agent-cycle.db'}"
+    macos_workspace = tmp_path / "macos-workspace"
+    hr_workspace = tmp_path / "hr-workspace"
+    director_workspace = tmp_path / "director-workspace"
+    ops_workspace = tmp_path / "ops-workspace"
+    _ensure_workspace_dirs(macos_workspace)
+    _ensure_workspace_dirs(hr_workspace)
+    _ensure_workspace_dirs(director_workspace)
+    _ensure_workspace_dirs(ops_workspace)
+
+    settings = Settings(
+        app_name="omniclaw-kernel",
+        environment="test",
+        log_level="INFO",
+        database_url=database_url,
+        provisioning_mode="mock",
+        allow_privileged_provisioning=False,
+    )
+    migrate_database_to_head(database_url)
+    app = create_app(settings)
+    repository = KernelRepository(create_session_factory(database_url))
+    macos = repository.create_node(
+        node_type=NodeType.HUMAN,
+        name="Macos_Supervisor",
+        status=NodeStatus.ACTIVE,
+        workspace_root=str(macos_workspace.resolve()),
+    )
+    director = repository.create_node(
+        node_type=NodeType.AGENT,
+        name="Director_01",
+        status=NodeStatus.ACTIVE,
+        workspace_root=str(director_workspace.resolve()),
+    )
+    hr = repository.create_node(
+        node_type=NodeType.AGENT,
+        name="HR_Head_01",
+        status=NodeStatus.ACTIVE,
+        workspace_root=str(hr_workspace.resolve()),
+    )
+    ops = repository.create_node(
+        node_type=NodeType.AGENT,
+        name="Ops_Head_01",
+        status=NodeStatus.ACTIVE,
+        workspace_root=str(ops_workspace.resolve()),
+    )
+    repository.link_manager(parent_node_id=macos.id, child_node_id=director.id)
+    repository.link_manager(parent_node_id=director.id, child_node_id=hr.id)
+    repository.link_manager(parent_node_id=director.id, child_node_id=ops.id)
+
+    client = TestClient(app)
+    sync_response = client.post("/v1/forms/workspace/sync", json={"activate": True, "prune_missing": False})
+    assert sync_response.status_code == 200
+    assert sync_response.json()["summary"]["failed"] == 0
+    assert sync_response.json()["summary"]["synced"] == 1
+
+    def assert_skill_manifest(workspace: Path, skill_name: str, expected_description: str) -> None:
+        manifest_path = workspace / "skills" / skill_name / "skill.json"
+        assert manifest_path.exists()
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert payload["name"] == skill_name
+        assert isinstance(payload.get("version"), str) and payload["version"]
+        assert payload["description"] == expected_description
+        assert isinstance(payload.get("author"), str) and payload["author"]
+
+    def submit_holder_decision(
+        *,
+        from_file: Path,
+        holder_workspace: Path,
+        decision: str,
+        stale_stage_skill: str,
+    ) -> None:
+        frontmatter, body = _load_frontmatter(from_file)
+        frontmatter["decision"] = decision
+        frontmatter["stage_skill"] = stale_stage_skill
+        pending_path = holder_workspace / "outbox" / "pending" / from_file.name
+        pending_path.write_text(
+            _render_with_frontmatter(frontmatter=frontmatter, body=body),
+            encoding="utf-8",
+        )
+
+    request_file = macos_workspace / "outbox" / "pending" / "deploy-cycle.md"
+    _write_generic_form_file(
+        queue_file=request_file,
+        form_type="deploy_new_agent",
+        stage="BUSINESS_CASE",
+        decision="submit_to_hr",
+        target="HR_Head_01",
+        stage_skill="stale-seed",
+        subject="Deploy new agent cycle",
+    )
+
+    # BUSINESS_CASE -> HR_REVIEW
+    scan_one = client.post("/v1/ipc/actions", json={"action": "scan_forms"})
+    assert scan_one.status_code == 200
+    item_one = scan_one.json()["items"][0]
+    assert item_one["status"] == "routed"
+    assert item_one["next_stage"] == "HR_REVIEW"
+    hr_delivery = hr_workspace / "inbox" / "unread" / "deploy-cycle.md"
+    assert hr_delivery.exists()
+    hr_frontmatter, _ = _load_frontmatter(hr_delivery)
+    assert hr_frontmatter["stage"] == "HR_REVIEW"
+    assert hr_frontmatter["stage_skill"] == "review-agent-role-and-template"
+    assert_skill_manifest(
+        hr_workspace,
+        "review-agent-role-and-template",
+        "Perform HR_REVIEW for deploy_new_agent forms and decide whether to move to finance or return for revision.",
+    )
+    form_id = str(item_one["form_id"])
+
+    # HR_REVIEW -> FINANCE_REVIEW
+    submit_holder_decision(
+        from_file=hr_delivery,
+        holder_workspace=hr_workspace,
+        decision="approve_to_finance",
+        stale_stage_skill="stale-hr",
+    )
+    scan_two = client.post("/v1/ipc/actions", json={"action": "scan_forms"})
+    assert scan_two.status_code == 200
+    macos_delivery = macos_workspace / "inbox" / "unread" / "deploy-cycle.md"
+    assert macos_delivery.exists()
+    macos_frontmatter, _ = _load_frontmatter(macos_delivery)
+    assert macos_frontmatter["stage"] == "FINANCE_REVIEW"
+    assert macos_frontmatter["stage_skill"] == "allocate-agent-budget"
+    assert_skill_manifest(
+        macos_workspace,
+        "allocate-agent-budget",
+        "Perform FINANCE_REVIEW for deploy_new_agent and decide whether budget is approved or returned to HR.",
+    )
+
+    # FINANCE_REVIEW -> DIRECTOR_APPROVAL
+    submit_holder_decision(
+        from_file=macos_delivery,
+        holder_workspace=macos_workspace,
+        decision="approve_to_director",
+        stale_stage_skill="stale-finance",
+    )
+    scan_three = client.post("/v1/ipc/actions", json={"action": "scan_forms"})
+    assert scan_three.status_code == 200
+    director_delivery = director_workspace / "inbox" / "unread" / "deploy-cycle.md"
+    assert director_delivery.exists()
+    director_frontmatter, _ = _load_frontmatter(director_delivery)
+    assert director_frontmatter["stage"] == "DIRECTOR_APPROVAL"
+    assert director_frontmatter["stage_skill"] == "final-agent-signoff"
+    assert_skill_manifest(
+        director_workspace,
+        "final-agent-signoff",
+        "Execute DIRECTOR_APPROVAL for deploy_new_agent and choose deployment, rework, or rejection.",
+    )
+
+    # DIRECTOR_APPROVAL -> AGENT_DEPLOYMENT
+    submit_holder_decision(
+        from_file=director_delivery,
+        holder_workspace=director_workspace,
+        decision="execute_deployment",
+        stale_stage_skill="stale-director",
+    )
+    scan_four = client.post("/v1/ipc/actions", json={"action": "scan_forms"})
+    assert scan_four.status_code == 200
+    ops_delivery = ops_workspace / "inbox" / "unread" / "deploy-cycle.md"
+    assert ops_delivery.exists()
+    ops_frontmatter, _ = _load_frontmatter(ops_delivery)
+    assert ops_frontmatter["stage"] == "AGENT_DEPLOYMENT"
+    assert ops_frontmatter["stage_skill"] == "deploy-new-nanobot"
+    assert_skill_manifest(
+        ops_workspace,
+        "deploy-new-nanobot",
+        (
+            "Deploy a repo-local Nanobot agent under workspace/agents/<agent_name>/ with sibling config.json, "
+            "workspace scaffold, AGENTS.md instructions, kernel provisioning trigger, and Nanobot smoke commands."
+        ),
+    )
+    for script_name in (
+        "deploy_new_nanobot.sh",
+        "deploy_new_nanobot_agent.sh",
+        "provision_agent_workflow.sh",
+    ):
+        wrapper_result = subprocess.run(
+            [
+                "bash",
+                str(ops_workspace / "skills" / "deploy-new-nanobot" / "scripts" / script_name),
+                "--help",
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "OMNICLAW_REPO_ROOT": str(ROOT)},
+            check=True,
+        )
+        assert "Usage:" in wrapper_result.stdout
+
+    # AGENT_DEPLOYMENT -> ARCHIVED (terminal, no holder)
+    submit_holder_decision(
+        from_file=ops_delivery,
+        holder_workspace=ops_workspace,
+        decision="deploy_and_archive",
+        stale_stage_skill="stale-deploy",
+    )
+    scan_five = client.post("/v1/ipc/actions", json={"action": "scan_forms"})
+    assert scan_five.status_code == 200
+    payload_five = scan_five.json()
+    assert payload_five["summary"]["routed"] == 1
+    archived_item = payload_five["items"][0]
+    assert archived_item["delivery_path"] is None
+    assert archived_item["next_stage"] == "ARCHIVED"
+    archive_frontmatter, _ = _load_frontmatter(Path(archived_item["archive_path"]))
+    assert archive_frontmatter["form_id"] == form_id
+    assert archive_frontmatter["stage"] == "ARCHIVED"
+    assert archive_frontmatter["decision"] == ""
+    assert archive_frontmatter["stage_skill"] == ""
+
+    session_factory = create_session_factory(database_url)
+    with session_factory() as session:
+        form = session.query(FormLedger).filter(FormLedger.form_id == form_id).first()
+        assert form is not None
+        assert form.current_status == "ARCHIVED"
+        assert form.current_holder_node is None
+        events = (
+            session.query(FormTransitionEvent)
+            .filter(FormTransitionEvent.form_id == form_id)
+            .order_by(FormTransitionEvent.sequence.asc())
+            .all()
+        )
+        assert [event.to_status for event in events] == [
+            "BUSINESS_CASE",
+            "HR_REVIEW",
+            "FINANCE_REVIEW",
+            "DIRECTOR_APPROVAL",
+            "AGENT_DEPLOYMENT",
+            "ARCHIVED",
+        ]
 
 
 def test_ipc_scan_marks_undelivered_malformed_frontmatter(tmp_path: Path) -> None:
@@ -879,6 +1351,8 @@ def test_ipc_scan_supports_terminal_null_stage_without_required_skill(tmp_path: 
     assert item["archive_path"] is not None
     assert item["backup_path"] is not None
     assert queue_file.exists() is False
+    archive_frontmatter, _ = _load_frontmatter(Path(item["archive_path"]))
+    assert archive_frontmatter["stage_skill"] == ""
 
     session_factory = create_session_factory(database_url)
     with session_factory() as session:
@@ -999,3 +1473,99 @@ def test_ipc_requeue_dead_letter_script_moves_file_to_pending(tmp_path: Path) ->
     pending_file = workspace_root / "outbox" / "pending" / "needs-fix.md"
     assert pending_file.exists()
     assert dead_letter_file.exists() is False
+
+
+def test_ipc_blocks_non_allowlisted_initiator_for_new_form(tmp_path: Path, monkeypatch) -> None:
+    workspace_root = tmp_path / "workspace"
+    forms_root = workspace_root / "forms" / "restricted_form"
+    skills_root = forms_root / "skills"
+    skill_dir = skills_root / "draft-restricted"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        (
+            "---\n"
+            "name: draft-restricted\n"
+            "description: Restricted draft skill.\n"
+            "---\n\n"
+            "# skill\n"
+        ),
+        encoding="utf-8",
+    )
+
+    workflow_payload = {
+        "form_type": "restricted_form",
+        "version": "1.0.0",
+        "description": "Restricted initiator workflow",
+        "initiator_allowlist": ["Macos_Supervisor"],
+        "start_stage": "DRAFT",
+        "end_stage": "ARCHIVED",
+        "stages": {
+            "DRAFT": {
+                "target": "{{initiator}}",
+                "required_skill": "draft-restricted",
+                "decisions": {"send": "ARCHIVED"},
+            },
+            "ARCHIVED": {
+                "target": None,
+                "is_terminal": True,
+            },
+        },
+    }
+    forms_root.mkdir(parents=True, exist_ok=True)
+    (forms_root / "workflow.json").write_text(json.dumps(workflow_payload, indent=2) + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(FormsService, "_workspace_root", lambda self: workspace_root)
+    monkeypatch.setattr(FormsService, "_workspace_forms_root", lambda self: workspace_root / "forms")
+    monkeypatch.setattr(IpcRouterService, "_workspace_forms_root", lambda self: workspace_root / "forms")
+
+    database_url = f"sqlite:///{tmp_path / 'ipc-restricted-initiator.db'}"
+    macos_workspace = tmp_path / "macos-workspace"
+    hr_workspace = tmp_path / "hr-workspace"
+    _ensure_workspace_dirs(macos_workspace)
+    _ensure_workspace_dirs(hr_workspace)
+
+    settings = Settings(
+        app_name="omniclaw-kernel",
+        environment="test",
+        log_level="INFO",
+        database_url=database_url,
+        provisioning_mode="mock",
+        allow_privileged_provisioning=False,
+    )
+    migrate_database_to_head(database_url)
+    app = create_app(settings)
+    repository = KernelRepository(create_session_factory(database_url))
+    repository.create_node(
+        node_type=NodeType.HUMAN,
+        name="Macos_Supervisor",
+        status=NodeStatus.ACTIVE,
+        workspace_root=str(macos_workspace.resolve()),
+    )
+    repository.create_node(
+        node_type=NodeType.AGENT,
+        name="HR_Head_01",
+        status=NodeStatus.ACTIVE,
+        workspace_root=str(hr_workspace.resolve()),
+    )
+
+    client = TestClient(app)
+    sync_response = client.post("/v1/forms/workspace/sync", json={"activate": True, "prune_missing": False})
+    assert sync_response.status_code == 200
+    assert sync_response.json()["summary"]["failed"] == 0
+
+    request_file = hr_workspace / "outbox" / "pending" / "restricted-initiation.md"
+    _write_generic_form_file(
+        queue_file=request_file,
+        form_type="restricted_form",
+        stage="DRAFT",
+        decision="send",
+        target=None,
+    )
+
+    scan = client.post("/v1/ipc/actions", json={"action": "scan_forms"})
+    assert scan.status_code == 200
+    payload = scan.json()
+    assert payload["summary"]["undelivered"] == 1
+    item = payload["items"][0]
+    assert item["status"] == "undelivered"
+    assert "not allowed to initiate this form" in str(item["failure_reason"])

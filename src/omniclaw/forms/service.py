@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from omniclaw.db.enums import FormStatus, FormTypeLifecycle
+from omniclaw.db.enums import FormStatus, FormTypeLifecycle, NodeStatus
 from omniclaw.db.models import FormLedger, FormTypeDefinition, Node
 from omniclaw.db.repository import KernelRepository, TransitionConflictError
 from omniclaw.forms.schemas import FormsActionRequest
@@ -49,6 +49,177 @@ class FormsService:
         if request.action == "acknowledge_message_read":
             return self._acknowledge_message_read(request)
         raise HTTPException(status_code=400, detail=f"Unsupported forms action '{request.action}'")
+
+    def sync_workspace_form_types(
+        self,
+        *,
+        prune_missing: bool = False,
+        activate: bool = True,
+    ) -> dict[str, object]:
+        forms_root = self._workspace_forms_root()
+        if not forms_root.exists() or not forms_root.is_dir():
+            raise HTTPException(status_code=400, detail=f"forms root not found: {forms_root}")
+
+        workflow_paths = sorted(forms_root.glob("*/workflow.json"))
+        synced_keys: set[tuple[str, str]] = set()
+        items: list[dict[str, object]] = []
+        removed: list[str] = []
+        preserved: list[str] = []
+        created = 0
+        updated = 0
+        unchanged = 0
+        activated = 0
+        failed = 0
+
+        for workflow_path in workflow_paths:
+            item: dict[str, object] = {"workflow_path": str(workflow_path.resolve())}
+            try:
+                workflow_graph = self._load_workspace_workflow_payload(workflow_path=workflow_path)
+                type_key = str(workflow_graph.get("form_type") or workflow_path.parent.name).strip()
+                version = str(workflow_graph.get("version") or "1.0.0").strip()
+                if not type_key:
+                    raise ValueError("missing form_type")
+                if not version:
+                    raise ValueError("missing version")
+
+                normalized_graph = dict(workflow_graph)
+                normalized_graph["form_type"] = type_key
+                normalized_graph["version"] = version
+                if self._is_stage_graph(normalized_graph):
+                    normalized_graph = self._normalize_stage_graph_decisions(normalized_graph)
+
+                raw_description = workflow_graph.get("description")
+                description = raw_description.strip() if isinstance(raw_description, str) and raw_description.strip() else None
+                raw_stage_metadata = workflow_graph.get("stage_metadata")
+                stage_metadata = raw_stage_metadata if isinstance(raw_stage_metadata, dict) else {}
+
+                validation_errors = self._validate_form_definition(
+                    type_key=type_key,
+                    workflow_graph=normalized_graph,
+                    stage_metadata=stage_metadata,
+                )
+                if validation_errors:
+                    item.update(
+                        {
+                            "status": "failed",
+                            "type_key": type_key,
+                            "version": version,
+                            "errors": validation_errors,
+                        }
+                    )
+                    failed += 1
+                    items.append(item)
+                    continue
+
+                existing = self._repository.get_form_type_definition(type_key=type_key, version=version)
+                is_changed = self._form_definition_changed(
+                    existing=existing,
+                    description=description,
+                    workflow_graph=normalized_graph,
+                    stage_metadata=stage_metadata,
+                )
+
+                if is_changed:
+                    upserted = self.execute(
+                        FormsActionRequest(
+                            action="upsert_form_type",
+                            type_key=type_key,
+                            version=version,
+                            description=description,
+                            workflow_graph=normalized_graph,
+                            stage_metadata=stage_metadata,
+                        )
+                    )
+                    upsert_errors = upserted.get("validation_errors")
+                    if isinstance(upsert_errors, list) and upsert_errors:
+                        item.update(
+                            {
+                                "status": "failed",
+                                "type_key": type_key,
+                                "version": version,
+                                "errors": [str(error) for error in upsert_errors],
+                            }
+                        )
+                        failed += 1
+                        items.append(item)
+                        continue
+                    if existing is None:
+                        created += 1
+                    else:
+                        updated += 1
+                else:
+                    unchanged += 1
+
+                lifecycle_state = existing.lifecycle_state.value if existing is not None else "DRAFT"
+                if activate:
+                    activated_definition = self.execute(
+                        FormsActionRequest(
+                            action="activate_form_type",
+                            type_key=type_key,
+                            version=version,
+                        )
+                    )
+                    payload = activated_definition.get("form_type")
+                    if isinstance(payload, dict):
+                        lifecycle_state = str(payload.get("lifecycle_state") or lifecycle_state)
+                    activated += 1
+
+                synced_keys.add((type_key, version))
+                item.update(
+                    {
+                        "status": "synced",
+                        "type_key": type_key,
+                        "version": version,
+                        "changed": is_changed,
+                        "lifecycle_state": lifecycle_state,
+                    }
+                )
+                items.append(item)
+            except (ValueError, OSError, HTTPException) as exc:
+                item.update(
+                    {
+                        "status": "failed",
+                        "errors": [str(exc)],
+                    }
+                )
+                failed += 1
+                items.append(item)
+
+        if prune_missing:
+            existing_definitions = self._repository.list_form_type_definitions()
+            for definition in existing_definitions:
+                key = (definition.type_key, definition.version)
+                if key in synced_keys:
+                    continue
+                ref_count = self._repository.count_form_instances_for_type_version(
+                    type_key=definition.type_key,
+                    version=definition.version,
+                )
+                if ref_count > 0:
+                    preserved.append(
+                        f"{definition.type_key}@{definition.version} (referenced_by_forms={ref_count})"
+                    )
+                    continue
+                self._repository.delete_form_type_definition(type_key=definition.type_key, version=definition.version)
+                removed.append(f"{definition.type_key}@{definition.version}")
+
+        return {
+            "action": "sync_workspace_form_types",
+            "summary": {
+                "scanned": len(workflow_paths),
+                "synced": len(synced_keys),
+                "created": created,
+                "updated": updated,
+                "unchanged": unchanged,
+                "activated": activated,
+                "failed": failed,
+                "removed": len(removed),
+                "preserved": len(preserved),
+            },
+            "removed": sorted(removed),
+            "preserved": sorted(preserved),
+            "items": items,
+        }
 
     def record_message_delivery(
         self,
@@ -1128,6 +1299,8 @@ class FormsService:
             if end_stage not in reachable:
                 errors.append(f"workflow_graph.end_stage '{end_stage}' is not reachable from start_stage")
 
+        errors.extend(self._validate_initiator_allowlist(workflow_graph=workflow_graph))
+
         forms_root = self._workspace_form_skills_root(type_key=type_key)
         for skill_name in sorted(required_skills):
             skill_file = forms_root / skill_name / "SKILL.md"
@@ -1150,6 +1323,17 @@ class FormsService:
 
         errors: list[str] = []
         active_agent_nodes = self._repository.list_active_agent_nodes_with_workspaces()
+        active_workspace_nodes = [
+            node
+            for node in self._repository.list_nodes_with_workspaces()
+            if node.status == NodeStatus.ACTIVE
+        ]
+        initiator_allowlist_nodes, initiator_allowlist_errors = self._resolve_initiator_allowlist_nodes(
+            workflow_graph=workflow_graph,
+            active_workspace_nodes=active_workspace_nodes,
+        )
+        errors.extend(initiator_allowlist_errors)
+
         for stage_name, stage_payload in raw_stages.items():
             if not isinstance(stage_name, str) or not stage_name.strip():
                 continue
@@ -1169,10 +1353,30 @@ class FormsService:
                 )
                 continue
 
+            skill_manifest_defaults = self._load_skill_manifest_defaults(
+                skill_source_dir=skill_source_dir,
+                skill_name=required_skill,
+            )
+            try:
+                self._repository.upsert_master_skill(
+                    name=skill_manifest_defaults["name"],
+                    form_type_key=type_key,
+                    master_path=str(skill_source_dir.resolve()),
+                    description=skill_manifest_defaults["description"],
+                    version=skill_manifest_defaults["version"],
+                )
+            except ValueError as exc:
+                errors.append(
+                    f"failed cataloging master skill '{required_skill}' for form '{type_key}': {exc}"
+                )
+                continue
+
             target_nodes, target_error = self._resolve_stage_distribution_nodes(
                 stage_name=stage_name,
                 stage_payload=stage_payload,
                 active_agent_nodes=active_agent_nodes,
+                active_workspace_nodes=active_workspace_nodes,
+                initiator_allowlist_nodes=initiator_allowlist_nodes,
             )
             if target_error is not None:
                 errors.append(target_error)
@@ -1183,6 +1387,7 @@ class FormsService:
                     node=node,
                     skill_name=required_skill,
                     skill_source_dir=skill_source_dir,
+                    manifest_defaults=skill_manifest_defaults,
                 )
                 if distribution_error is not None:
                     errors.append(distribution_error)
@@ -1194,6 +1399,8 @@ class FormsService:
         stage_name: str,
         stage_payload: dict[str, Any],
         active_agent_nodes: list[Node],
+        active_workspace_nodes: list[Node],
+        initiator_allowlist_nodes: list[Node] | None,
     ) -> tuple[list[Node], str | None]:
         target = stage_payload.get("target")
         if target is None:
@@ -1208,6 +1415,10 @@ class FormsService:
 
         if target == "{{any}}":
             return active_agent_nodes, None
+        if target == "{{initiator}}":
+            if initiator_allowlist_nodes is not None:
+                return initiator_allowlist_nodes, None
+            return active_workspace_nodes, None
         if self._is_dynamic_target(target):
             return active_agent_nodes, None
 
@@ -1220,12 +1431,80 @@ class FormsService:
             )
         return [node], None
 
+    def _validate_initiator_allowlist(self, *, workflow_graph: dict[str, Any]) -> list[str]:
+        raw_allowlist = workflow_graph.get("initiator_allowlist")
+        if raw_allowlist is None:
+            return []
+
+        errors: list[str] = []
+        if not isinstance(raw_allowlist, list) or not raw_allowlist:
+            return ["workflow_graph.initiator_allowlist must be a non-empty array when provided"]
+
+        for index, raw_reference in enumerate(raw_allowlist):
+            if not isinstance(raw_reference, str) or not raw_reference.strip():
+                errors.append(
+                    f"workflow_graph.initiator_allowlist[{index}] must be a non-empty node name/id or '{{{{any}}}}'"
+                )
+                continue
+            reference = raw_reference.strip()
+            if reference == "{{any}}":
+                continue
+            _, node_error = self._resolve_node_reference(reference)
+            if node_error is not None:
+                errors.append(f"workflow_graph.initiator_allowlist[{index}] invalid: {node_error}")
+        return errors
+
+    def _resolve_initiator_allowlist_nodes(
+        self,
+        *,
+        workflow_graph: dict[str, Any],
+        active_workspace_nodes: list[Node],
+    ) -> tuple[list[Node] | None, list[str]]:
+        raw_allowlist = workflow_graph.get("initiator_allowlist")
+        if raw_allowlist is None:
+            return None, []
+        if not isinstance(raw_allowlist, list) or not raw_allowlist:
+            return None, ["workflow_graph.initiator_allowlist must be a non-empty array when provided"]
+
+        errors: list[str] = []
+        active_nodes_by_id = {node.id: node for node in active_workspace_nodes}
+        selected: dict[str, Node] = {}
+
+        for index, raw_reference in enumerate(raw_allowlist):
+            if not isinstance(raw_reference, str) or not raw_reference.strip():
+                errors.append(
+                    f"workflow_graph.initiator_allowlist[{index}] must be a non-empty node name/id or '{{{{any}}}}'"
+                )
+                continue
+            reference = raw_reference.strip()
+            if reference == "{{any}}":
+                return active_workspace_nodes, errors
+
+            node, node_error = self._resolve_node_reference(reference)
+            if node_error is not None or node is None:
+                reason = node_error if node_error is not None else f"node '{reference}' not found"
+                errors.append(f"workflow_graph.initiator_allowlist[{index}] invalid: {reason}")
+                continue
+
+            active_workspace_node = active_nodes_by_id.get(node.id)
+            if active_workspace_node is None:
+                errors.append(
+                    f"workflow_graph.initiator_allowlist[{index}] node '{node.name}' is not ACTIVE with workspace_root"
+                )
+                continue
+            selected[active_workspace_node.id] = active_workspace_node
+
+        if errors:
+            return None, errors
+        return list(selected.values()), []
+
     def _copy_skill_to_node(
         self,
         *,
         node: Node,
         skill_name: str,
         skill_source_dir: Path,
+        manifest_defaults: dict[str, str],
     ) -> str | None:
         workspace_root = node.workspace_root
         if not isinstance(workspace_root, str) or not workspace_root.strip():
@@ -1237,6 +1516,11 @@ class FormsService:
         workspace = Path(workspace_root).expanduser().resolve()
         target_skill_dir = workspace / "skills" / skill_name
         try:
+            if target_skill_dir.exists():
+                if target_skill_dir.is_dir():
+                    shutil.rmtree(target_skill_dir)
+                else:
+                    target_skill_dir.unlink()
             target_skill_dir.mkdir(parents=True, exist_ok=True)
             for child in skill_source_dir.iterdir():
                 destination = target_skill_dir / child.name
@@ -1244,12 +1528,129 @@ class FormsService:
                     shutil.copytree(child, destination, dirs_exist_ok=True)
                 else:
                     shutil.copy2(child, destination)
+            manifest_error = self._ensure_skill_manifest(
+                target_skill_dir=target_skill_dir,
+                skill_name=skill_name,
+                manifest_defaults=manifest_defaults,
+            )
+            if manifest_error is not None:
+                return (
+                    f"failed writing skill.json for required_skill '{skill_name}' "
+                    f"to node '{node.name}' at '{target_skill_dir}': {manifest_error}"
+                )
         except OSError as exc:
             return (
                 f"failed distributing required_skill '{skill_name}' to node '{node.name}' "
                 f"at '{target_skill_dir}': {exc}"
             )
         return None
+
+    def _ensure_skill_manifest(
+        self,
+        *,
+        target_skill_dir: Path,
+        skill_name: str,
+        manifest_defaults: dict[str, str],
+    ) -> str | None:
+        manifest_path = target_skill_dir / "skill.json"
+        payload: dict[str, Any] = {}
+        if manifest_path.exists():
+            try:
+                existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as exc:
+                return str(exc)
+            if isinstance(existing, dict):
+                payload.update(existing)
+
+        defaults = {
+            "name": manifest_defaults.get("name", skill_name),
+            "version": manifest_defaults.get("version", "1.0.0"),
+            "description": manifest_defaults.get(
+                "description",
+                f"Dispatched form skill package '{skill_name}'.",
+            ),
+            "author": manifest_defaults.get("author", "omniclaw-kernel"),
+        }
+        for key, value in defaults.items():
+            if key == "description":
+                payload[key] = value
+                continue
+            existing_value = payload.get(key)
+            if not isinstance(existing_value, str) or not existing_value.strip():
+                payload[key] = value
+
+        try:
+            manifest_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        except OSError as exc:
+            return str(exc)
+        return None
+
+    def _load_skill_manifest_defaults(self, *, skill_source_dir: Path, skill_name: str) -> dict[str, str]:
+        defaults = {
+            "name": skill_name,
+            "version": "1.0.0",
+            "description": f"Dispatched form skill package '{skill_name}'.",
+            "author": "omniclaw-kernel",
+        }
+
+        source_manifest_path = skill_source_dir / "skill.json"
+        if source_manifest_path.exists():
+            try:
+                source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                source_manifest = {}
+            if isinstance(source_manifest, dict):
+                for key in ("name", "version", "description", "author"):
+                    raw_value = source_manifest.get(key)
+                    if isinstance(raw_value, str) and raw_value.strip():
+                        defaults[key] = raw_value.strip()
+
+        frontmatter = self._parse_skill_frontmatter(skill_source_dir / "SKILL.md")
+        name = self._optional_str(frontmatter.get("name"))
+        description = self._optional_str(frontmatter.get("description"))
+        version = self._optional_str(frontmatter.get("version"))
+        author = self._optional_str(frontmatter.get("author"))
+        if name:
+            defaults["name"] = name
+        if description:
+            defaults["description"] = description
+        if version:
+            defaults["version"] = version
+        if author:
+            defaults["author"] = author
+        return defaults
+
+    def _parse_skill_frontmatter(self, skill_path: Path) -> dict[str, str]:
+        try:
+            content = skill_path.read_text(encoding="utf-8")
+        except OSError:
+            return {}
+
+        if not content.startswith("---\n"):
+            return {}
+        lines = content.splitlines()
+        if not lines or lines[0].strip() != "---":
+            return {}
+
+        closing_index: int | None = None
+        for index in range(1, len(lines)):
+            if lines[index].strip() == "---":
+                closing_index = index
+                break
+        if closing_index is None:
+            return {}
+
+        frontmatter: dict[str, str] = {}
+        for line in lines[1:closing_index]:
+            stripped = line.strip()
+            if not stripped or ":" not in stripped:
+                continue
+            key, value = stripped.split(":", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key:
+                frontmatter[key] = value
+        return frontmatter
 
     def _is_dynamic_target(self, target: str) -> bool:
         if target in {"{{initiator}}", "{{any}}"}:
@@ -1460,6 +1861,37 @@ class FormsService:
 
     def _workspace_form_skills_root(self, *, type_key: str) -> Path:
         return self._workspace_forms_root() / type_key / "skills"
+
+    def _load_workspace_workflow_payload(self, *, workflow_path: Path) -> dict[str, Any]:
+        try:
+            raw = json.loads(workflow_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid JSON in {workflow_path}: {exc}") from exc
+        if not isinstance(raw, dict):
+            raise ValueError(f"workflow file must contain a JSON object: {workflow_path}")
+        return raw
+
+    def _form_definition_changed(
+        self,
+        *,
+        existing: FormTypeDefinition | None,
+        description: str | None,
+        workflow_graph: dict[str, Any],
+        stage_metadata: dict[str, Any],
+    ) -> bool:
+        if existing is None:
+            return True
+
+        existing_graph = self._decode_json(existing.workflow_graph)
+        existing_stages = self._decode_json(existing.stage_metadata)
+        if isinstance(existing_graph, dict) and self._is_stage_graph(existing_graph):
+            existing_graph = self._normalize_stage_graph_decisions(existing_graph)
+
+        return not (
+            existing.description == description
+            and existing_graph == workflow_graph
+            and existing_stages == stage_metadata
+        )
 
     def _persist_workflow_copy(
         self,

@@ -34,7 +34,7 @@ class Node(Base):
     linux_username: Mapped[str | None] = mapped_column(String(64), nullable=True)
     linux_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     workspace_root: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    nullclaw_config_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    runtime_config_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     primary_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     gateway_running: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     gateway_pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -183,6 +183,9 @@ class MasterSkill(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
     name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    form_type_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    master_path: Mapped[str] = mapped_column(String(1024), nullable=False, default="")
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     execution_endpoint: Mapped[str | None] = mapped_column(String(255), nullable=True)
     validation_status: Mapped[SkillValidationStatus] = mapped_column(
         Enum(
@@ -194,8 +197,11 @@ class MasterSkill(Base):
         nullable=False,
         default=SkillValidationStatus.DRAFT,
     )
-    version: Mapped[str] = mapped_column(String(64), nullable=False, default="0.1.0")
+    version: Mapped[str] = mapped_column(String(64), nullable=False, default="1.0.0")
     checksum: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )

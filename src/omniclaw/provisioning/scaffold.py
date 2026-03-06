@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from copy import deepcopy
+import json
 from pathlib import Path
 
 REQUIRED_DIRS: tuple[str, ...] = (
@@ -8,29 +10,48 @@ REQUIRED_DIRS: tuple[str, ...] = (
     "outbox/pending",
     "outbox/drafts",
     "outbox/archive",
+    "outbox/dead-letter",
     "notes",
     "metrics",
     "drafts",
+    "memory",
+    "sessions",
     "skills",
 )
 
-REQUIRED_FILES: dict[str, str] = {
-    "notes/DECISIONS.md": "# Decisions\n\n",
-    "notes/BLOCKERS.md": "# Blockers\n\n",
-    "metrics/KPI.csv": "date,metric,value\n",
-    "HEARTBEAT.md": (
-        "# HEARTBEAT.md\n\n"
-        "- Check `inbox/unread` for new form files.\n"
-        "- For each unread message form, run only:\n"
-        "  `python3 skills/read_and_acknowledge_internal_message/scripts/acknowledge_and_archive_message.py --apply --workspace-root <this_workspace_root> --form-file <unread_filename>`\n"
-        "- Execute these steps immediately without asking for extra confirmation.\n"
-        "- Avoid exploratory shell commands unrelated to the skill execution.\n"
-        "- The read/ack tool moves `inbox/unread/<file>.md` to `inbox/read/<file>.md` and updates DB form stage.\n"
-        "- Keep handled copies out of `inbox/unread`.\n"
-        "- If nothing needs attention, reply with `HEARTBEAT_OK`.\n"
-    ),
-    "AGENTS.md": "# AGENTS\n\nRendered by kernel context injector.\n",
+REPO_ROOT = Path(__file__).resolve().parents[3]
+TEMPLATE_ROOT = REPO_ROOT / "workspace" / "agent_templates"
+
+REQUIRED_FILE_TEMPLATES: dict[str, str] = {
+    "notes/DECISIONS.md": "notes/DECISIONS.md",
+    "notes/BLOCKERS.md": "notes/BLOCKERS.md",
+    "metrics/KPI.csv": "metrics/KPI.csv",
+    "memory/MEMORY.md": "memory/MEMORY.md",
+    "memory/HISTORY.md": "memory/HISTORY.md",
+    "HEARTBEAT.md": "HEARTBEAT.md",
+    "AGENTS.md": "AGENTS.placeholder.md",
+    "SOUL.md": "SOUL.md",
+    "USER.md": "USER.md",
+    "TOOLS.md": "TOOLS.md",
 }
+
+
+def _load_template_text(relative_path: str) -> str:
+    return (TEMPLATE_ROOT / relative_path).read_text(encoding="utf-8")
+
+
+def _load_template_json(relative_path: str) -> dict[str, object]:
+    payload = json.loads((TEMPLATE_ROOT / relative_path).read_text(encoding="utf-8"))
+    return payload if isinstance(payload, dict) else {}
+
+
+REQUIRED_FILES: dict[str, str] = {
+    relative_file: _load_template_text(template_relative)
+    for relative_file, template_relative in REQUIRED_FILE_TEMPLATES.items()
+}
+
+
+NANOBOT_CONFIG_TEMPLATE: dict[str, object] = _load_template_json("config.json")
 
 
 def ensure_workspace_tree(*, workspace_root: Path, apply: bool) -> dict[str, tuple[str, ...]]:
@@ -57,7 +78,7 @@ def ensure_workspace_tree(*, workspace_root: Path, apply: bool) -> dict[str, tup
             if apply:
                 target.mkdir(parents=True, exist_ok=True)
 
-    for relative_file, content in REQUIRED_FILES.items():
+    for relative_file, template_relative in REQUIRED_FILE_TEMPLATES.items():
         target = root / relative_file
         if target.exists():
             existing_files.append(str(target))
@@ -65,7 +86,7 @@ def ensure_workspace_tree(*, workspace_root: Path, apply: bool) -> dict[str, tup
             created_files.append(str(target))
             if apply:
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(content, encoding="utf-8")
+                target.write_text(_load_template_text(template_relative), encoding="utf-8")
 
     return {
         "created_dirs": tuple(created_dirs),
@@ -73,3 +94,63 @@ def ensure_workspace_tree(*, workspace_root: Path, apply: bool) -> dict[str, tup
         "created_files": tuple(created_files),
         "existing_files": tuple(existing_files),
     }
+
+
+def ensure_nanobot_config(
+    *,
+    config_path: Path,
+    workspace_root: Path,
+    apply: bool,
+    primary_model: str | None = None,
+    gateway_host: str | None = None,
+    gateway_port: int | None = None,
+    seed_config: dict[str, object] | None = None,
+) -> dict[str, object]:
+    resolved_config = config_path.expanduser().resolve()
+    resolved_workspace = workspace_root.expanduser().resolve()
+    existed = resolved_config.exists()
+
+    if existed:
+        try:
+            config_data = json.loads(resolved_config.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            config_data = {}
+    else:
+        config_data = {}
+
+    merged = deepcopy(NANOBOT_CONFIG_TEMPLATE)
+    _deep_merge_dicts(merged, config_data)
+    if seed_config:
+        _deep_merge_dicts(merged, deepcopy(seed_config))
+
+    defaults = merged.setdefault("agents", {}).setdefault("defaults", {})
+    defaults["workspace"] = str(resolved_workspace)
+    if primary_model:
+        defaults["model"] = primary_model
+
+    gateway = merged.setdefault("gateway", {})
+    if gateway_host:
+        gateway["host"] = gateway_host
+    if gateway_port is not None:
+        gateway["port"] = gateway_port
+
+    created = not existed
+    updated = existed
+    if apply:
+        resolved_config.parent.mkdir(parents=True, exist_ok=True)
+        resolved_config.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+
+    return {
+        "path": str(resolved_config),
+        "created": created,
+        "updated": updated,
+    }
+
+
+def _deep_merge_dicts(target: dict[str, object], source: dict[str, object]) -> None:
+    for key, value in source.items():
+        existing = target.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            _deep_merge_dicts(existing, value)
+        else:
+            target[key] = value

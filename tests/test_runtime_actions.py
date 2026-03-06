@@ -22,7 +22,9 @@ from tests.helpers import migrate_database_to_head
 def test_runtime_gateway_lifecycle_in_mock_mode(tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'runtime.db'}"
     workspace_root = tmp_path / "agent-workspace"
+    config_path = tmp_path / "agent-config.json"
     workspace_root.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("{\n  \"agents\": {\"defaults\": {\"model\": \"openai-codex/gpt-5.4\"}}\n}\n", encoding="utf-8")
 
     settings = Settings(
         app_name="omniclaw-kernel",
@@ -34,7 +36,7 @@ def test_runtime_gateway_lifecycle_in_mock_mode(tmp_path: Path) -> None:
         runtime_mode="mock",
         allow_privileged_runtime=False,
         runtime_use_sudo=False,
-        runtime_gateway_command_template="nullclaw gateway --host {host} --port {port}",
+        runtime_gateway_command_template="nanobot gateway --workspace {workspace_root} --config {config_path} --port {port}",
         runtime_command_timeout_seconds=10,
         runtime_output_boundary_rel="drafts/runtime",
     )
@@ -48,7 +50,7 @@ def test_runtime_gateway_lifecycle_in_mock_mode(tmp_path: Path) -> None:
         linux_uid=1001,
         linux_username="agent_director_01",
         workspace_root=str(workspace_root.resolve()),
-        nullclaw_config_path="/home/agent_director_01/.nullclaw/config.json",
+        runtime_config_path=str(config_path.resolve()),
         primary_model="openai-codex/gpt-5.3-codex",
     )
 
@@ -74,6 +76,8 @@ def test_runtime_gateway_lifecycle_in_mock_mode(tmp_path: Path) -> None:
     assert start_metadata["action"] == "gateway_start"
     assert start_metadata["exit_code"] in {0, 10}
     assert start_metadata["artifact_paths"]["output_root"].startswith(str(workspace_root.resolve()))
+    assert "--workspace" in start_metadata["command"]
+    assert str(config_path.resolve()) in start_metadata["command"]
 
     status_response = client.post(
         "/v1/runtime/actions",
@@ -139,7 +143,7 @@ def test_runtime_requires_node_identifier(tmp_path: Path) -> None:
         runtime_mode="mock",
         allow_privileged_runtime=False,
         runtime_use_sudo=False,
-        runtime_gateway_command_template="nullclaw gateway --host {host} --port {port}",
+        runtime_gateway_command_template="nanobot gateway --workspace {workspace_root} --config {config_path} --port {port}",
         runtime_command_timeout_seconds=10,
         runtime_output_boundary_rel="drafts/runtime",
     )
@@ -158,7 +162,9 @@ def test_runtime_requires_node_identifier(tmp_path: Path) -> None:
 def test_runtime_rejects_malicious_gateway_host(tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'runtime-malicious-host.db'}"
     workspace_root = tmp_path / "agent-workspace-malicious"
+    config_path = tmp_path / "malicious-config.json"
     workspace_root.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("{}", encoding="utf-8")
     migrate_database_to_head(database_url)
 
     settings = Settings(
@@ -180,7 +186,7 @@ def test_runtime_rejects_malicious_gateway_host(tmp_path: Path) -> None:
         status=NodeStatus.ACTIVE,
         linux_username="malicious_host_node",
         workspace_root=str(workspace_root.resolve()),
-        nullclaw_config_path="/home/malicious_host_node/.nullclaw/config.json",
+        runtime_config_path=str(config_path.resolve()),
     )
     client = TestClient(app)
 
@@ -200,7 +206,9 @@ def test_runtime_rejects_malicious_gateway_host(tmp_path: Path) -> None:
 def test_runtime_rejects_invalid_gateway_command_template(tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'runtime-invalid-template.db'}"
     workspace_root = tmp_path / "agent-workspace-template"
+    config_path = tmp_path / "template-config.json"
     workspace_root.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("{}", encoding="utf-8")
 
     settings = Settings(
         app_name="omniclaw-kernel",
@@ -212,7 +220,7 @@ def test_runtime_rejects_invalid_gateway_command_template(tmp_path: Path) -> Non
         runtime_mode="mock",
         allow_privileged_runtime=False,
         runtime_use_sudo=False,
-        runtime_gateway_command_template="nullclaw gateway --host {bad_key}",
+        runtime_gateway_command_template="nanobot gateway --workspace {workspace_root} --config {bad_key}",
         runtime_command_timeout_seconds=10,
         runtime_output_boundary_rel="drafts/runtime",
     )
@@ -225,7 +233,7 @@ def test_runtime_rejects_invalid_gateway_command_template(tmp_path: Path) -> Non
         status=NodeStatus.ACTIVE,
         linux_username="template_bad",
         workspace_root=str(workspace_root.resolve()),
-        nullclaw_config_path="/home/template_bad/.nullclaw/config.json",
+        runtime_config_path=str(config_path.resolve()),
     )
     client = TestClient(app)
 
@@ -243,7 +251,9 @@ def test_runtime_rejects_invalid_gateway_command_template(tmp_path: Path) -> Non
 def test_runtime_rejects_output_boundary_escape(tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'runtime-boundary-escape.db'}"
     workspace_root = tmp_path / "agent-workspace-boundary"
+    config_path = tmp_path / "boundary-config.json"
     workspace_root.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("{}", encoding="utf-8")
 
     settings = Settings(
         app_name="omniclaw-kernel",
@@ -255,7 +265,7 @@ def test_runtime_rejects_output_boundary_escape(tmp_path: Path) -> None:
         runtime_mode="mock",
         allow_privileged_runtime=False,
         runtime_use_sudo=False,
-        runtime_gateway_command_template="nullclaw gateway --host {host} --port {port}",
+        runtime_gateway_command_template="nanobot gateway --workspace {workspace_root} --config {config_path} --port {port}",
         runtime_command_timeout_seconds=10,
         runtime_output_boundary_rel="../escape",
     )
@@ -268,7 +278,7 @@ def test_runtime_rejects_output_boundary_escape(tmp_path: Path) -> None:
         status=NodeStatus.ACTIVE,
         linux_username="boundary_bad",
         workspace_root=str(workspace_root.resolve()),
-        nullclaw_config_path="/home/boundary_bad/.nullclaw/config.json",
+        runtime_config_path=str(config_path.resolve()),
     )
     client = TestClient(app)
 

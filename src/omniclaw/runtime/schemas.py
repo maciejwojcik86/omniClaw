@@ -19,7 +19,7 @@ class RuntimeActionRequest(BaseModel):
     node_id: str | None = None
     node_name: str | None = None
     gateway_host: str = "127.0.0.1"
-    gateway_port: int = Field(default=3000, ge=1, le=65535)
+    gateway_port: int = Field(default=18790, ge=1, le=65535)
     force_restart: bool = False
 
     @field_validator("gateway_host")

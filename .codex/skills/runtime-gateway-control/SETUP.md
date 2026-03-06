@@ -14,7 +14,7 @@ Set these for real host control:
 export OMNICLAW_RUNTIME_MODE=system
 export OMNICLAW_ALLOW_PRIVILEGED_RUNTIME=true
 export OMNICLAW_RUNTIME_USE_SUDO=true
-export OMNICLAW_RUNTIME_GATEWAY_COMMAND_TEMPLATE='nullclaw gateway --host {host} --port {port}'
+export OMNICLAW_RUNTIME_GATEWAY_COMMAND_TEMPLATE='nanobot gateway --workspace {workspace_root} --config {config_path} --port {port}'
 export OMNICLAW_RUNTIME_COMMAND_TIMEOUT_SECONDS=30
 export OMNICLAW_RUNTIME_OUTPUT_BOUNDARY_REL='drafts/runtime'
 ```

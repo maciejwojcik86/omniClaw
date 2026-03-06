@@ -1,7 +1,7 @@
 # OmniClaw Engineering Instructions
 
 ## Project Mission
-OmniClaw builds a kernel that orchestrates isolated Linux-user agents using formal Markdown/YAML forms, canonical database state, strict budget controls, and managed skill distribution.
+OmniClaw builds a kernel that orchestrates repo-local Nanobot agents using formal Markdown/YAML forms, canonical database state, strict budget controls, and managed skill distribution.
 
 ## Skill-First Development Paradigm (Mandatory)
 - Prefer modular, single-responsibility implementation steps over monolithic A-to-Z scripts.
@@ -9,8 +9,8 @@ OmniClaw builds a kernel that orchestrates isolated Linux-user agents using form
   - Linux user creation
   - Workspace scaffold creation
   - Ownership/group permission policy
-- Use `$deploy-new-claw-agent` as the default unified provisioning skill (workflow + setup + audit).
-- Use `$nullclaw-runtime-reference` for upstream Nullclaw runtime/config/extension references.
+- Use `$deploy-new-nanobot` as the default unified provisioning skill (workflow + setup + audit).
+- Use `/home/macos/.nanobot/`, `/home/macos/nanobot/`, and the Nanobot deployment assets as the runtime/config reference baseline.
 - Use `$runtime-gateway-control` for delegated gateway on/off/status endpoint workflows.
 - Use `$alembic-migration-ops` when changing schema or verifying migration success.
 - Every proven implementation pattern MUST be captured as a reusable skill under `.codex/skills/<skill-name>/SKILL.md`.
@@ -103,7 +103,7 @@ A change is done only when all are true:
 - FastAPI kernel service
 - SQLAlchemy + Alembic
 - SQLite first, PostgreSQL compatibility path
-- Nullclaw runtime integration in dedicated milestones
+- Nanobot runtime integration in dedicated milestones
 - LiteLLM integration in dedicated milestones
 
 ## Repository Map
@@ -133,6 +133,7 @@ Top-level map (update as project evolves):
 - `scripts/ipc/`: helper scripts for IPC router action triggers and form-routing checks.
 - `scripts/forms/`: helper scripts for form-type administration, workspace workflow publication, and smoke checks.
 - `workspace/`: repo-local supervisor/agent workspaces plus company-level form/skill artifacts.
+  - `workspace/agents/`: deployed Nanobot agent directories (`<agent_name>/config.json` plus nested `workspace/`).
   - `workspace/forms/`: approved canonical form workflow packages (`<form_type>/workflow.json`).
   - `workspace/forms/<form_type>/skills/`: per-form stage skill master copies (`<required_skill>/...`).
   - `workspace/master_skills/`: approved master skills for company behavior bootstrapping.

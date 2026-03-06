@@ -20,7 +20,7 @@ required = {
     "linux_username",
     "linux_password",
     "workspace_root",
-    "nullclaw_config_path",
+    "runtime_config_path",
     "primary_model",
     "gateway_running",
     "gateway_pid",

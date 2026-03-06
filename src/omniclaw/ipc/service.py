@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import fcntl
 import json
 import re
 import shutil
 import time
-from typing import Any
+from typing import Any, TextIO
 
 from fastapi import HTTPException
 
@@ -73,12 +74,35 @@ class IpcRouterService:
                         skipped += 1
                         continue
 
-                    scanned += 1
-                    item = self._process_source_file(
-                        sender=sender,
-                        sender_workspace=sender_workspace,
-                        source_path=source_path,
-                    )
+                    try:
+                        claimed_handle = self._try_claim_source_file(source_path)
+                    except OSError as exc:
+                        scanned += 1
+                        item = self._undelivered(
+                            sender=sender,
+                            source_path=str(source_path.resolve()),
+                            failure_reason=f"unable to claim queued form file: {exc}",
+                            form_type=None,
+                            form_id=None,
+                            target=None,
+                            stage=None,
+                            decision=None,
+                            next_stage=None,
+                        )
+                        items.append(item)
+                        undelivered += 1
+                        continue
+                    if claimed_handle is None:
+                        skipped += 1
+                        continue
+
+                    with claimed_handle:
+                        scanned += 1
+                        item = self._process_source_file(
+                            sender=sender,
+                            sender_workspace=sender_workspace,
+                            source_path=source_path,
+                        )
                     items.append(item)
                     if item["status"] == "routed":
                         routed += 1
@@ -98,6 +122,22 @@ class IpcRouterService:
             },
             "items": items,
         }
+
+    def _try_claim_source_file(self, source_path: Path) -> TextIO | None:
+        try:
+            handle = source_path.open("r", encoding="utf-8")
+        except FileNotFoundError:
+            return None
+
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            handle.close()
+            return None
+        except OSError:
+            handle.close()
+            raise
+        return handle
 
     def _process_source_file(
         self,
@@ -346,6 +386,24 @@ class IpcRouterService:
                 next_stage=next_stage,
             )
 
+        if existing_form is None:
+            initiator_allowed, initiator_allowlist_error = self._is_allowed_initiator(
+                sender=sender,
+                stage_graph=stage_graph,
+            )
+            if not initiator_allowed:
+                return self._undelivered(
+                    sender=sender,
+                    source_path=original_source_path,
+                    failure_reason=initiator_allowlist_error or "sender is not permitted to initiate this form type",
+                    form_type=form_type,
+                    form_id=self._optional_str(frontmatter.get("form_id")),
+                    target=self._optional_str(frontmatter.get("target")),
+                    stage=current_stage,
+                    decision=decision_key,
+                    next_stage=next_stage,
+                )
+
         initiator_node_id, initiator_error = self._resolve_initiator_node_id(
             sender=sender,
             frontmatter=frontmatter,
@@ -459,6 +517,7 @@ class IpcRouterService:
             "in_reply_to",
             "initiator_node_id",
             "target_node_id",
+            "stage_skill",
             "previous_decision",
             "previous_transition",
             "transition",
@@ -469,6 +528,7 @@ class IpcRouterService:
                 "form_type": form_type,
                 "form_id": form_id,
                 "stage": next_stage,
+                "stage_skill": required_skill or "",
                 "decision": "",
                 "sender": sender.name,
                 "target": target_node.name if target_node is not None else "none",
@@ -677,6 +737,7 @@ class IpcRouterService:
             "start_stage": start_stage,
             "end_stage": end_stage,
             "stages": raw_stages,
+            "initiator_allowlist": workflow_graph.get("initiator_allowlist"),
         }, None
 
     def _resolve_current_stage(self, *, frontmatter: dict[str, str], stage_graph: dict[str, Any]) -> str:
@@ -786,6 +847,43 @@ class IpcRouterService:
 
         return sender.id, None
 
+    def _is_allowed_initiator(self, *, sender: Node, stage_graph: dict[str, Any]) -> tuple[bool, str | None]:
+        raw_allowlist = stage_graph.get("initiator_allowlist")
+        if raw_allowlist is None:
+            return True, None
+        if not isinstance(raw_allowlist, list) or not raw_allowlist:
+            return False, "workflow initiator_allowlist must be a non-empty array when provided"
+
+        allowed_node_ids: set[str] = set()
+        for index, raw_reference in enumerate(raw_allowlist):
+            if not isinstance(raw_reference, str) or not raw_reference.strip():
+                return (
+                    False,
+                    (
+                        "workflow initiator_allowlist contains invalid reference at index "
+                        f"{index}: must be non-empty node name/id or '{{{{any}}}}'"
+                    ),
+                )
+            reference = raw_reference.strip()
+            if reference == "{{any}}":
+                return True, None
+
+            node, node_error = self._resolve_node_reference(reference)
+            if node_error is not None or node is None:
+                reason = node_error if node_error is not None else f"node '{reference}' not found"
+                return False, f"workflow initiator_allowlist[{index}] invalid: {reason}"
+            allowed_node_ids.add(node.id)
+
+        if sender.id in allowed_node_ids:
+            return True, None
+        return (
+            False,
+            (
+                f"sender '{sender.name}' is not allowed to initiate this form "
+                "(not in workflow initiator_allowlist)"
+            ),
+        )
+
     def _resolve_target_node(
         self,
         *,
@@ -873,6 +971,10 @@ class IpcRouterService:
         safe_skill_rel, safe_error = self._safe_relative_path(skill_name)
         if safe_error is not None:
             return f"required_skill '{skill_name}' is invalid: {safe_error}"
+        manifest_defaults = self._load_skill_manifest_defaults(
+            master_skill_dir=master_skill_dir,
+            skill_name=skill_name,
+        )
 
         for node in target_nodes:
             workspace = self._resolve_workspace_root(node)
@@ -880,6 +982,11 @@ class IpcRouterService:
                 return f"target node '{node.name}' has no valid workspace_root"
             target_skill_dir = workspace / "skills" / safe_skill_rel
             try:
+                if target_skill_dir.exists():
+                    if target_skill_dir.is_dir():
+                        shutil.rmtree(target_skill_dir)
+                    else:
+                        target_skill_dir.unlink()
                 target_skill_dir.mkdir(parents=True, exist_ok=True)
                 for child in master_skill_dir.iterdir():
                     destination = target_skill_dir / child.name
@@ -887,12 +994,129 @@ class IpcRouterService:
                         shutil.copytree(child, destination, dirs_exist_ok=True)
                     else:
                         shutil.copy2(child, destination)
+                manifest_error = self._ensure_skill_manifest(
+                    target_skill_dir=target_skill_dir,
+                    skill_name=skill_name,
+                    manifest_defaults=manifest_defaults,
+                )
+                if manifest_error is not None:
+                    return (
+                        f"failed to write skill.json for skill '{skill_name}' "
+                        f"at '{target_skill_dir}': {manifest_error}"
+                    )
             except OSError as exc:
                 return (
                     f"failed to distribute skill '{skill_name}' to node '{node.name}' "
                     f"at '{target_skill_dir}': {exc}"
                 )
         return None
+
+    def _ensure_skill_manifest(
+        self,
+        *,
+        target_skill_dir: Path,
+        skill_name: str,
+        manifest_defaults: dict[str, str],
+    ) -> str | None:
+        manifest_path = target_skill_dir / "skill.json"
+        payload: dict[str, Any] = {}
+        if manifest_path.exists():
+            try:
+                existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as exc:
+                return str(exc)
+            if isinstance(existing, dict):
+                payload.update(existing)
+
+        defaults = {
+            "name": manifest_defaults.get("name", skill_name),
+            "version": manifest_defaults.get("version", "1.0.0"),
+            "description": manifest_defaults.get(
+                "description",
+                f"Dispatched form skill package '{skill_name}'.",
+            ),
+            "author": manifest_defaults.get("author", "omniclaw-kernel"),
+        }
+        for key, value in defaults.items():
+            if key == "description":
+                payload[key] = value
+                continue
+            existing_value = payload.get(key)
+            if not isinstance(existing_value, str) or not existing_value.strip():
+                payload[key] = value
+
+        try:
+            manifest_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        except OSError as exc:
+            return str(exc)
+        return None
+
+    def _load_skill_manifest_defaults(self, *, master_skill_dir: Path, skill_name: str) -> dict[str, str]:
+        defaults = {
+            "name": skill_name,
+            "version": "1.0.0",
+            "description": f"Dispatched form skill package '{skill_name}'.",
+            "author": "omniclaw-kernel",
+        }
+
+        source_manifest_path = master_skill_dir / "skill.json"
+        if source_manifest_path.exists():
+            try:
+                source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                source_manifest = {}
+            if isinstance(source_manifest, dict):
+                for key in ("name", "version", "description", "author"):
+                    raw_value = source_manifest.get(key)
+                    if isinstance(raw_value, str) and raw_value.strip():
+                        defaults[key] = raw_value.strip()
+
+        frontmatter = self._parse_skill_frontmatter(master_skill_dir / "SKILL.md")
+        name = self._optional_str(frontmatter.get("name"))
+        description = self._optional_str(frontmatter.get("description"))
+        version = self._optional_str(frontmatter.get("version"))
+        author = self._optional_str(frontmatter.get("author"))
+        if name:
+            defaults["name"] = name
+        if description:
+            defaults["description"] = description
+        if version:
+            defaults["version"] = version
+        if author:
+            defaults["author"] = author
+        return defaults
+
+    def _parse_skill_frontmatter(self, skill_path: Path) -> dict[str, str]:
+        try:
+            content = skill_path.read_text(encoding="utf-8")
+        except OSError:
+            return {}
+
+        if not content.startswith("---\n"):
+            return {}
+        lines = content.splitlines()
+        if not lines or lines[0].strip() != "---":
+            return {}
+
+        closing_index: int | None = None
+        for index in range(1, len(lines)):
+            if lines[index].strip() == "---":
+                closing_index = index
+                break
+        if closing_index is None:
+            return {}
+
+        frontmatter: dict[str, str] = {}
+        for line in lines[1:closing_index]:
+            stripped = line.strip()
+            if not stripped or ":" not in stripped:
+                continue
+            key, value = stripped.split(":", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key:
+                frontmatter[key] = value
+        return frontmatter
 
     def _workspace_forms_root(self) -> Path:
         return Path(__file__).resolve().parents[3] / "workspace" / "forms"

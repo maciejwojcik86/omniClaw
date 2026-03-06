@@ -4,7 +4,7 @@ import sys
 from alembic import command
 from alembic.config import Config
 import pytest
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -73,7 +73,7 @@ def test_alembic_upgrade_creates_canonical_tables(tmp_path: Path) -> None:
         "linux_username",
         "linux_password",
         "workspace_root",
-        "nullclaw_config_path",
+        "runtime_config_path",
         "primary_model",
         "gateway_running",
         "gateway_pid",
@@ -102,6 +102,78 @@ def test_alembic_upgrade_creates_canonical_tables(tmp_path: Path) -> None:
         "dead_lettered_at",
         "failure_reason",
     }.issubset(form_columns)
+
+    master_skill_columns = {column["name"] for column in inspector.get_columns("master_skills")}
+    assert {
+        "name",
+        "form_type_key",
+        "master_path",
+        "description",
+        "version",
+        "validation_status",
+        "updated_at",
+    }.issubset(master_skill_columns)
+
+
+def test_alembic_renames_runtime_config_column_without_data_loss(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'runtime-config-rename.db'}"
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(ROOT / "alembic"))
+    config.set_main_option("sqlalchemy.url", database_url)
+
+    command.upgrade(config, "20260305_0009")
+
+    engine = create_engine_from_url(database_url)
+    with engine.begin() as connection:
+        pre_columns = {column["name"] for column in inspect(connection).get_columns("nodes")}
+        assert "nullclaw_config_path" in pre_columns
+        assert "runtime_config_path" not in pre_columns
+
+        connection.execute(
+            text(
+                """
+                INSERT INTO nodes (
+                    id,
+                    type,
+                    name,
+                    autonomy_level,
+                    status,
+                    nullclaw_config_path
+                )
+                VALUES (
+                    :id,
+                    :type,
+                    :name,
+                    :autonomy_level,
+                    :status,
+                    :nullclaw_config_path
+                )
+                """
+            ),
+            {
+                "id": "runtime-rename-node",
+                "type": NodeType.AGENT.value,
+                "name": "Director_01",
+                "autonomy_level": 2,
+                "status": NodeStatus.ACTIVE.value,
+                "nullclaw_config_path": "/tmp/director/config.json",
+            },
+        )
+
+    command.upgrade(config, "head")
+
+    upgraded_engine = create_engine_from_url(database_url)
+    upgraded_columns = {column["name"] for column in inspect(upgraded_engine).get_columns("nodes")}
+    assert "runtime_config_path" in upgraded_columns
+    assert "nullclaw_config_path" not in upgraded_columns
+
+    with upgraded_engine.connect() as connection:
+        stored_path = connection.execute(
+            text("SELECT runtime_config_path FROM nodes WHERE id = :id"),
+            {"id": "runtime-rename-node"},
+        ).scalar_one()
+
+    assert stored_path == "/tmp/director/config.json"
 
 
 def test_repository_enforces_single_line_manager(tmp_path: Path) -> None:

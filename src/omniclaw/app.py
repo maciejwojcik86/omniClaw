@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from omniclaw.config import Settings, load_settings
 from omniclaw.db.repository import KernelRepository
 from omniclaw.db.session import create_engine_from_url, create_session_factory, require_database_at_head
-from omniclaw.forms import FormsActionRequest, FormsService
+from omniclaw.forms import FormsActionRequest, FormsService, FormsWorkspaceSyncRequest
 from omniclaw.ipc import IpcActionRequest, IpcRouterService
 from omniclaw.logging import configure_logging
 from omniclaw.provisioning import (
@@ -153,5 +153,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def forms_actions(request: FormsActionRequest) -> dict[str, object]:
         service = FormsService(repository=repository)
         return service.execute(request)
+
+    @app.post("/v1/forms/workspace/sync")
+    def forms_workspace_sync(request: FormsWorkspaceSyncRequest | None = None) -> dict[str, object]:
+        service = FormsService(repository=repository)
+        payload = request or FormsWorkspaceSyncRequest()
+        return service.sync_workspace_form_types(
+            prune_missing=payload.prune_missing,
+            activate=payload.activate,
+        )
 
     return app

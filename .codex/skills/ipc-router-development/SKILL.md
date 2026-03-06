@@ -5,7 +5,7 @@ license: MIT
 compatibility: Python 3.11+, running OmniClaw kernel API
 metadata:
   author: omniclaw
-  version: "0.2"
+  version: "0.3"
 ---
 
 Use this skill when implementing or extending form routing in `src/omniclaw/ipc/service.py`.
@@ -16,6 +16,8 @@ Use this skill when implementing or extending form routing in `src/omniclaw/ipc/
 - Graph-driven decisions using active form definition from `form_types`.
 - Filesystem lifecycle: sender archive, target inbox delivery, repo-level backup in `workspace/form_archive/`, and dead-letter + feedback handling for invalid forms.
 - Next-stage skill distribution from `workspace/forms/<form_type>/skills/<required_skill>/...` to participant workspaces.
+- Dispatched skills are normalized with `skill.json` beside `SKILL.md`; router writes missing required metadata keys (`name`, `version`, `description`, `author`).
+- Kernel-managed routed metadata field `stage_skill` (next-stage required skill, empty string at terminal no-holder stages).
 - Scan traversal is hard-bounded by action `limit` (router stops processing once scanned count reaches limit).
 - Kernel auto-scan executes through non-blocking thread offload from lifespan loop.
 
@@ -25,6 +27,7 @@ Use this skill when implementing or extending form routing in `src/omniclaw/ipc/
 - `decision`
 - optional `target` for dynamic target stages (`{{any}}` / `{{var}}`)
 - optional `form_id` (required after first handoff)
+- `stage_skill` is output metadata only; router overwrites any incoming value on every hop.
 
 Legacy compatibility:
 - `type: MESSAGE` maps to `form_type: message`.
@@ -38,12 +41,15 @@ Legacy compatibility:
    - sender copy in `outbox/archive`
    - target copy in `inbox/unread` (when next holder exists)
    - backup copy in `workspace/form_archive/<form_type>/<form_id>/`
+   - routed frontmatter contains kernel-written `stage_skill`
 4. Verify DB state:
    - `forms_ledger.current_status` updated to next stage
    - `forms_ledger.current_holder_node` updated to next holder (or null)
    - decision event appended in `form_transition_events`
 5. Verify skill distribution:
    - next-stage skill copied to `<target_workspace>/skills/<required_skill>/`
+   - dispatched skill contains `<target_workspace>/skills/<required_skill>/skill.json` with required metadata fields
+   - terminal stage archive copy has `stage_skill: ""`
 6. For undelivered files:
    - source file moved to `outbox/dead-letter`
    - kernel feedback artifact appears in recipient `inbox/unread` (target-first, sender fallback)
@@ -57,6 +63,8 @@ Legacy compatibility:
   - `./scripts/ipc/requeue_dead_letter.sh --apply --workspace-root <workspace> --file <name>.md`
 - IPC tests:
   - `uv run pytest -q tests/test_ipc_actions.py`
+- Deploy workflow live smoke runbook:
+  - `scripts/forms/smoke_deploy_new_agent_e2e.sh [--apply]`
 
 ## Fallback
 If a form is undelivered:
