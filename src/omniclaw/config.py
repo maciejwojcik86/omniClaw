@@ -1,6 +1,13 @@
 from dataclasses import dataclass
 from functools import lru_cache
 from os import getenv
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(REPO_ROOT / ".env", override=False)
 
 
 @dataclass(frozen=True)
@@ -21,12 +28,24 @@ class Settings:
     )
     runtime_command_timeout_seconds: int = 30
     runtime_output_boundary_rel: str = "drafts/runtime"
-    ipc_queue_paths: tuple[str, ...] = ("outbox/pending",)
+    ipc_queue_paths: tuple[str, ...] = ("outbox/send", "outbox/pending")
     ipc_archive_rel: str = "outbox/archive"
     ipc_dead_letter_rel: str = "outbox/dead-letter"
-    ipc_inbox_unread_rel: str = "inbox/unread"
+    ipc_inbox_new_rel: str = "inbox/new"
     ipc_router_scan_interval_seconds: int = 5
     ipc_router_auto_scan_enabled: bool = True
+    budget_auto_cycle_enabled: bool = True
+    budget_auto_cycle_poll_interval_seconds: int = 60
+    company_config_path: str | None = None
+    litellm_proxy_url: str | None = None
+    litellm_master_key: str | None = None
+    litellm_auto_start_local_proxy: bool = True
+    litellm_local_config_path: str | None = None
+    litellm_startup_timeout_seconds: int = 30
+
+    @property
+    def ipc_inbox_unread_rel(self) -> str:
+        return self.ipc_inbox_new_rel
 
 
 def _parse_bool(raw_value: str | None, default: bool) -> bool:
@@ -61,6 +80,11 @@ def _parse_csv_paths(raw_value: str | None, default: tuple[str, ...]) -> tuple[s
 @lru_cache(maxsize=1)
 def load_settings() -> Settings:
     helper_path = getenv("OMNICLAW_PROVISIONING_HELPER_PATH")
+    ipc_inbox_rel = (
+        getenv("OMNICLAW_IPC_INBOX_NEW_REL")
+        or getenv("OMNICLAW_IPC_INBOX_UNREAD_REL")
+        or "inbox/new"
+    )
     return Settings(
         app_name=getenv("OMNICLAW_APP_NAME", "omniclaw-kernel"),
         environment=getenv("OMNICLAW_ENV", "development"),
@@ -99,11 +123,11 @@ def load_settings() -> Settings:
         ),
         ipc_queue_paths=_parse_csv_paths(
             getenv("OMNICLAW_IPC_QUEUE_PATHS"),
-            ("outbox/pending",),
+            ("outbox/send", "outbox/pending"),
         ),
         ipc_archive_rel=getenv("OMNICLAW_IPC_ARCHIVE_REL", "outbox/archive").strip().strip("/"),
         ipc_dead_letter_rel=getenv("OMNICLAW_IPC_DEAD_LETTER_REL", "outbox/dead-letter").strip().strip("/"),
-        ipc_inbox_unread_rel=getenv("OMNICLAW_IPC_INBOX_UNREAD_REL", "inbox/unread").strip().strip("/"),
+        ipc_inbox_new_rel=ipc_inbox_rel.strip().strip("/"),
         ipc_router_scan_interval_seconds=_parse_int(
             getenv("OMNICLAW_IPC_ROUTER_SCAN_INTERVAL_SECONDS"),
             default=5,
@@ -111,5 +135,25 @@ def load_settings() -> Settings:
         ipc_router_auto_scan_enabled=_parse_bool(
             getenv("OMNICLAW_IPC_ROUTER_AUTO_SCAN_ENABLED"),
             default=True,
+        ),
+        budget_auto_cycle_enabled=_parse_bool(
+            getenv("OMNICLAW_BUDGET_AUTO_CYCLE_ENABLED"),
+            default=True,
+        ),
+        budget_auto_cycle_poll_interval_seconds=_parse_int(
+            getenv("OMNICLAW_BUDGET_AUTO_CYCLE_POLL_INTERVAL_SECONDS"),
+            default=60,
+        ),
+        company_config_path=getenv("OMNICLAW_COMPANY_CONFIG_PATH"),
+        litellm_proxy_url=getenv("LITELLM_PROXY_URL"),
+        litellm_master_key=getenv("LITELLM_MASTER_KEY"),
+        litellm_auto_start_local_proxy=_parse_bool(
+            getenv("OMNICLAW_LITELLM_AUTO_START_LOCAL_PROXY"),
+            default=True,
+        ),
+        litellm_local_config_path=getenv("OMNICLAW_LITELLM_CONFIG_PATH"),
+        litellm_startup_timeout_seconds=_parse_int(
+            getenv("OMNICLAW_LITELLM_STARTUP_TIMEOUT_SECONDS"),
+            default=30,
         ),
     )

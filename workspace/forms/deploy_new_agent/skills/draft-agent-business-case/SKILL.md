@@ -29,14 +29,14 @@ Create a complete, review-ready deployment request that HR and Finance can evalu
    - `form_type: deploy_new_agent`
    - `stage: BUSINESS_CASE`
    - `decision: submit_to_hr`
-   - `target: Macos_Supervisor`
    - `subject: Deploy request - <role_name>`
+   - leave `target` empty unless the workflow explicitly requires a dynamic target
 3. Complete every section in the body template with concrete details.
 4. Run a self-check:
    - A reviewer can understand role boundaries in one pass.
    - Required tooling and permissions are explicitly listed.
    - Risks and mitigations are concrete, not generic.
-5. If complete, move file to `<workspace>/outbox/pending/` and keep `decision: submit_to_hr`.
+5. If complete, move file to `<workspace>/outbox/send/` and keep `decision: submit_to_hr`.
 
 ## When Not To Submit
 Keep the form in draft if any are missing:
@@ -51,4 +51,4 @@ Keep the form in draft if any are missing:
 - Reviewer can choose `approve_to_finance` or `return_to_initiator` using evidence in the form.
 
 ## Fallback
-- If kernel reports validation/routing issues, update frontmatter or missing sections and resubmit from `outbox/pending/`.
+- If kernel reports validation/routing issues, update frontmatter or missing sections and resubmit from `outbox/send/`.

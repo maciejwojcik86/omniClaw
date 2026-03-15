@@ -62,18 +62,24 @@ def test_alembic_upgrade_creates_canonical_tables(tmp_path: Path) -> None:
         "nodes",
         "hierarchy",
         "budgets",
+        "budget_allocations",
+        "budget_cycles",
         "forms_ledger",
         "form_types",
         "form_transition_events",
         "master_skills",
+        "agent_llm_calls",
+        "agent_session_exports",
     }.issubset(tables)
 
     node_columns = {column["name"] for column in inspector.get_columns("nodes")}
     assert {
+        "role_name",
         "linux_username",
         "linux_password",
         "workspace_root",
         "runtime_config_path",
+        "instruction_template_root",
         "primary_model",
         "gateway_running",
         "gateway_pid",
@@ -113,6 +119,13 @@ def test_alembic_upgrade_creates_canonical_tables(tmp_path: Path) -> None:
         "validation_status",
         "updated_at",
     }.issubset(master_skill_columns)
+
+    budget_columns = {column["name"] for column in inspector.get_columns("budgets")}
+    assert {
+        "budget_mode",
+        "rollover_reserve_usd",
+        "review_required_at",
+    }.issubset(budget_columns)
 
 
 def test_alembic_renames_runtime_config_column_without_data_loss(tmp_path: Path) -> None:
@@ -203,6 +216,49 @@ def test_repository_enforces_single_line_manager(tmp_path: Path) -> None:
         repository.link_manager(parent_node_id=manager_two.id, child_node_id=worker.id)
 
 
+def test_repository_persists_node_instruction_metadata(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'instruction-metadata.db'}"
+    engine = create_engine_from_url(database_url)
+    init_db(engine)
+    repository = KernelRepository(create_session_factory(database_url))
+
+    manager = repository.create_node(
+        node_type=NodeType.HUMAN,
+        name="Manager_01",
+        status=NodeStatus.ACTIVE,
+        workspace_root=str((tmp_path / "workspace" / "manager").resolve()),
+    )
+    worker = repository.create_node(
+        node_type=NodeType.AGENT,
+        name="Worker_01",
+        status=NodeStatus.ACTIVE,
+        role_name="Worker",
+        workspace_root=str((tmp_path / "workspace" / "agents" / "Worker_01" / "workspace").resolve()),
+        instruction_template_root=str((tmp_path / "workspace" / "nanobots_instructions" / "Worker_01").resolve()),
+    )
+
+    repository.link_manager(parent_node_id=manager.id, child_node_id=worker.id)
+    refreshed = repository.update_node_instruction_fields(
+        node_id=worker.id,
+        role_name="Senior Worker",
+        instruction_template_root=str(
+            (tmp_path / "workspace" / "nanobots_instructions" / "Worker_01_v2").resolve()
+        ),
+    )
+
+    assert refreshed.role_name == "Senior Worker"
+    assert refreshed.instruction_template_root == str(
+        (tmp_path / "workspace" / "nanobots_instructions" / "Worker_01_v2").resolve()
+    )
+
+    children = repository.list_child_nodes(parent_node_id=manager.id)
+    manager_node = repository.get_manager_node(child_node_id=worker.id)
+    assert len(children) == 1
+    assert children[0].name == "Worker_01"
+    assert manager_node is not None
+    assert manager_node.name == "Manager_01"
+
+
 def test_repository_creates_message_ledger_entries(tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'message-ledger.db'}"
     engine = create_engine_from_url(database_url)
@@ -230,8 +286,8 @@ def test_repository_creates_message_ledger_entries(tmp_path: Path) -> None:
         sender_node_id=sender.id,
         target_node_id=target.id,
         subject="Hello",
-        source_path="/tmp/sender/outbox/pending/hello-world.md",
-        delivery_path="/tmp/manager/inbox/unread/hello-world.md",
+        source_path="/tmp/sender/outbox/send/hello-world.md",
+        delivery_path="/tmp/manager/inbox/new/hello-world.md",
         archive_path="/tmp/sender/outbox/archive/hello-world.md",
         dead_letter_path=None,
         queued_at=None,

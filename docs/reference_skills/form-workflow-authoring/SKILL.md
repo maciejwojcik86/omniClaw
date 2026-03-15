@@ -355,7 +355,7 @@ Fix:
 Cause:
 - form file missing frontmatter `target`.
 Fix:
-- set `target` to node name/id, keep file in `outbox/pending`, rerun scan.
+- set `target` to node name/id, keep file in `outbox/send`, rerun scan.
 
 ### Decision rejected
 Cause:

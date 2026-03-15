@@ -5,9 +5,9 @@ import json
 from pathlib import Path
 
 REQUIRED_DIRS: tuple[str, ...] = (
-    "inbox/unread",
+    "inbox/new",
     "inbox/read",
-    "outbox/pending",
+    "outbox/send",
     "outbox/drafts",
     "outbox/archive",
     "outbox/dead-letter",
@@ -20,7 +20,7 @@ REQUIRED_DIRS: tuple[str, ...] = (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-TEMPLATE_ROOT = REPO_ROOT / "workspace" / "agent_templates"
+TEMPLATE_ROOT = REPO_ROOT / "workspace" / "nanobot_workspace_templates"
 
 REQUIRED_FILE_TEMPLATES: dict[str, str] = {
     "notes/DECISIONS.md": "notes/DECISIONS.md",
@@ -105,6 +105,8 @@ def ensure_nanobot_config(
     gateway_host: str | None = None,
     gateway_port: int | None = None,
     seed_config: dict[str, object] | None = None,
+    litellm_api_base: str | None = None,
+    litellm_api_key: str | None = None,
 ) -> dict[str, object]:
     resolved_config = config_path.expanduser().resolve()
     resolved_workspace = workspace_root.expanduser().resolve()
@@ -127,6 +129,17 @@ def ensure_nanobot_config(
     defaults["workspace"] = str(resolved_workspace)
     if primary_model:
         defaults["model"] = primary_model
+    if litellm_api_base or litellm_api_key:
+        defaults["provider"] = "custom"
+        provider_defaults = merged.setdefault("providers", {}).setdefault("custom", {})
+        if litellm_api_base:
+            provider_defaults["apiBase"] = litellm_api_base
+        if litellm_api_key:
+            provider_defaults["apiKey"] = litellm_api_key
+    if litellm_api_base:
+        defaults.pop("apiBase", None)
+    if litellm_api_key:
+        defaults.pop("apiKey", None)
 
     gateway = merged.setdefault("gateway", {})
     if gateway_host:

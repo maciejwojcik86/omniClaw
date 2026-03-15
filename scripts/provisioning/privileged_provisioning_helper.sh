@@ -68,9 +68,9 @@ init_config_script="$repo_root/scripts/provisioning/init_nullclaw_config.py"
 
 create_workspace_tree() {
   local root="$1"
-  mkdir -p "$root/inbox/unread"
+  mkdir -p "$root/inbox/new"
   mkdir -p "$root/inbox/read"
-  mkdir -p "$root/outbox/pending"
+  mkdir -p "$root/outbox/send"
   mkdir -p "$root/outbox/drafts"
   mkdir -p "$root/outbox/archive"
   mkdir -p "$root/outbox/dead-letter"

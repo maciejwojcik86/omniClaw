@@ -18,4 +18,32 @@ omniclaw.db
 *.db-journal
 workspace/logs/
 workspace/form_archive/
+workspace/finances/
 workspace/*/outbox/archive/
+
+# Local developer/runtime state
+.env
+.agent/
+/GEMINI.md
+/HEARTBEAT.md
+/SOUL.md
+/TOOLS.md
+/USER.md
+/memory/
+/sessions/
+/cron/jobs.json
+/notatki.md
+
+# Live workspace traffic and runtime outputs
+workspace/*/inbox/new/*
+!workspace/*/inbox/new/.gitkeep
+workspace/*/outbox/send/*
+!workspace/*/outbox/send/.gitkeep
+workspace/agents/*/workspace/cron/jobs.json
+workspace/agents/*/workspace/drafts/
+workspace/agents/*/workspace/inbox/new/*
+workspace/agents/*/workspace/inbox/read/*
+workspace/agents/*/workspace/inbox/*.processed
+workspace/agents/*/workspace/outbox/archive/
+workspace/agents/*/workspace/outbox/dead-letter/
+workspace/agents/*/workspace/sessions/

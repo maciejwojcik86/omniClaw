@@ -1,0 +1,6 @@
+{
+  "name": "deploy-new-claw-agent",
+  "version": "0.9",
+  "description": "End-to-end workflow to deploy a new Linux Nullclaw agent user with baseline ~/.nullclaw config, workspace scaffold, AGENTS.md instructions, permissions, kernel endpoint trigger, and permission audit.",
+  "author": "omniclaw"
+}

@@ -15,7 +15,7 @@
 ## 3. Kernel Wiring and Workspace Compatibility
 
 - [x] 3.1 Add kernel endpoint/action wiring for deterministic IPC scan execution.
-- [x] 3.2 Update workspace scaffold contract for `outbox/drafts`, `outbox/archive`, and `outbox/dead-letter` while preserving compatibility with existing `outbox/pending`/`outbox/sent` paths.
+- [x] 3.2 Update workspace scaffold contract for `outbox/drafts`, `outbox/archive`, and `outbox/dead-letter` while preserving compatibility with existing `outbox/send`/`outbox/sent` paths.
 - [x] 3.3 Add runtime-safe configuration defaults for router polling/scan behavior and queue path selection.
 
 ## 4. Verification and Regression Coverage

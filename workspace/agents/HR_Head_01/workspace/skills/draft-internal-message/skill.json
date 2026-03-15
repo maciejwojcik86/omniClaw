@@ -1,0 +1,6 @@
+{
+  "name": "draft-internal-message",
+  "version": "1.0.0",
+  "description": "Create a `message` form draft and send it through the graph workflow.",
+  "author": "omniclaw-kernel"
+}

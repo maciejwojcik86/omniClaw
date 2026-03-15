@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from omniclaw.db.base import Base
@@ -14,6 +14,7 @@ from omniclaw.db.enums import (
     NodeType,
     RelationshipType,
     SkillValidationStatus,
+    BudgetMode,
 )
 
 
@@ -30,11 +31,13 @@ class Node(Base):
         nullable=False,
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    role_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     linux_uid: Mapped[int | None] = mapped_column(Integer, nullable=True)
     linux_username: Mapped[str | None] = mapped_column(String(64), nullable=True)
     linux_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     workspace_root: Mapped[str | None] = mapped_column(String(512), nullable=True)
     runtime_config_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    instruction_template_root: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     primary_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     gateway_running: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     gateway_pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -78,15 +81,62 @@ class Budget(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
     node_id: Mapped[str] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False, unique=True)
-    daily_limit_usd: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=Decimal("0.00"))
-    per_task_cap_usd: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=Decimal("0.00"))
+    daily_limit_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6), nullable=False, default=Decimal("0.000000"))
+    per_task_cap_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6), nullable=False, default=Decimal("0.000000"))
     virtual_api_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     parent_node_id: Mapped[str | None] = mapped_column(ForeignKey("nodes.id", ondelete="SET NULL"), nullable=True)
     allocated_percentage: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
-    current_daily_allowance: Mapped[Decimal] = mapped_column(
-        Numeric(10, 2), nullable=False, default=Decimal("0.00")
+    budget_mode: Mapped[BudgetMode] = mapped_column(
+        Enum(BudgetMode, name="budget_mode", native_enum=False, validate_strings=True),
+        nullable=False,
+        default=BudgetMode.METERED,
+        server_default=BudgetMode.METERED.value,
     )
-    current_spend: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=Decimal("0.00"))
+    current_daily_allowance: Mapped[Decimal] = mapped_column(
+        Numeric(12, 6), nullable=False, default=Decimal("0.000000")
+    )
+    rollover_reserve_usd: Mapped[Decimal] = mapped_column(
+        Numeric(12, 6), nullable=False, default=Decimal("0.000000"), server_default="0.000000"
+    )
+    current_spend: Mapped[Decimal] = mapped_column(Numeric(12, 6), nullable=False, default=Decimal("0.000000"))
+    review_required_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class BudgetAllocation(Base):
+    __tablename__ = "budget_allocations"
+    __table_args__ = (
+        UniqueConstraint("manager_node_id", "child_node_id", name="uq_budget_allocations_manager_child"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    manager_node_id: Mapped[str] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False)
+    child_node_id: Mapped[str] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False)
+    percentage: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class BudgetCycle(Base):
+    __tablename__ = "budget_cycles"
+    __table_args__ = (UniqueConstraint("cycle_date", name="uq_budget_cycles_cycle_date"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    cycle_date: Mapped[date] = mapped_column(Date(), nullable=False)
+    company_budget_usd: Mapped[Decimal] = mapped_column(Numeric(12, 6), nullable=False, default=Decimal("0.000000"))
+    root_allocator_node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("nodes.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    executed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -204,4 +254,37 @@ class MasterSkill(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+class AgentLLMCall(Base):
+    __tablename__ = "agent_llm_calls"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    node_id: Mapped[str] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False)
+    session_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provider: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reasoning_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    estimated_cost_usd: Mapped[Decimal] = mapped_column(Numeric(10, 6), nullable=False, default=Decimal('0.000000'))
+    start_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AgentSessionExport(Base):
+    __tablename__ = "agent_session_exports"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    node_id: Mapped[str] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False)
+    session_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    export_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    messages_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )

@@ -1,0 +1,6 @@
+{
+  "name": "manage-team-budgets",
+  "version": "1.0.0",
+  "description": "Kernel-backed manager workflow for reviewing and updating direct-report waterfall budgets.",
+  "author": "omniclaw-kernel"
+}

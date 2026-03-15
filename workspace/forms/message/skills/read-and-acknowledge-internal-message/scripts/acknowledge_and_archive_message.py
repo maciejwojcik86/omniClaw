@@ -13,13 +13,13 @@ import urllib.request
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Acknowledge a message form by moving inbox/unread -> inbox/read, "
+            "Acknowledge a message form by moving inbox/new -> inbox/read, "
             "updating frontmatter stage to ARCHIVED, and posting acknowledge_message_read "
             "to kernel forms endpoint."
         )
     )
     parser.add_argument("--workspace-root", required=True, help="Node workspace root path.")
-    parser.add_argument("--form-file", required=True, help="Form filename currently in inbox/unread.")
+    parser.add_argument("--form-file", required=True, help="Form filename currently in inbox/new.")
     parser.add_argument(
         "--actor-node-id",
         default="",
@@ -129,7 +129,7 @@ def post_decision(
     actor_node_name: str | None,
     decision_key: str,
     to_status: str,
-    unread_path: Path,
+    new_path: Path,
     read_path: Path,
 ) -> dict[str, object]:
     url = kernel_url.rstrip("/") + endpoint
@@ -139,7 +139,7 @@ def post_decision(
         actor_node_name=actor_node_name,
         decision_key=decision_key,
         to_status=to_status,
-        unread_path=unread_path,
+        new_path=new_path,
         read_path=read_path,
     )
     try:
@@ -165,7 +165,7 @@ def post_decision(
                     actor_node_name=None,
                     decision_key=decision_key,
                     to_status=to_status,
-                    unread_path=unread_path,
+                    new_path=new_path,
                     read_path=read_path,
                 )
                 try:
@@ -195,7 +195,7 @@ def _build_decision_payload(
     actor_node_name: str | None,
     decision_key: str,
     to_status: str,
-    unread_path: Path,
+    new_path: Path,
     read_path: Path,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
@@ -204,7 +204,7 @@ def _build_decision_payload(
         "decision_key": decision_key,
         "to_status": to_status,
         "payload": {
-            "unread_path": str(unread_path),
+            "new_path": str(new_path),
             "read_path": str(read_path),
         },
     }
@@ -270,11 +270,11 @@ def main() -> int:
     args = parse_args()
 
     workspace_root = Path(args.workspace_root).expanduser().resolve()
-    unread_path = workspace_root / "inbox" / "unread" / args.form_file
+    new_path = workspace_root / "inbox" / "new" / args.form_file
     read_dir = workspace_root / "inbox" / "read"
     read_path = read_dir / args.form_file
 
-    if not unread_path.exists():
+    if not new_path.exists():
         if read_path.exists():
             existing_content = read_path.read_text(encoding="utf-8")
             existing_pairs, _ = parse_frontmatter(existing_content)
@@ -293,10 +293,10 @@ def main() -> int:
                 )
                 return 0
 
-        print(f"Unread form file not found: {unread_path}", file=sys.stderr)
+        print(f"New form file not found: {new_path}", file=sys.stderr)
         return 1
 
-    original_content = unread_path.read_text(encoding="utf-8")
+    original_content = new_path.read_text(encoding="utf-8")
     pairs, body = parse_frontmatter(original_content)
 
     form_type = next((v for k, v in pairs if k == "form_type"), "")
@@ -331,7 +331,7 @@ def main() -> int:
 
     dry_payload = {
         "workspace_root": str(workspace_root),
-        "unread_path": str(unread_path),
+        "new_path": str(new_path),
         "read_path": str(read_path),
         "form_id": form_id,
         "actor_node_id": actor_node_id,
@@ -354,7 +354,7 @@ def main() -> int:
     try:
         read_dir.mkdir(parents=True, exist_ok=True)
 
-        shutil.move(str(unread_path), str(read_path))
+        shutil.move(str(new_path), str(read_path))
         moved = True
         read_path.write_text(patched_content, encoding="utf-8")
 
@@ -367,14 +367,14 @@ def main() -> int:
             actor_node_name=actor_node_name,
             decision_key=args.decision_key,
             to_status=args.to_status,
-            unread_path=unread_path,
+            new_path=new_path,
             read_path=read_path,
         )
     except Exception as exc:
         if moved and read_path.exists():
             try:
                 read_path.write_text(original_content, encoding="utf-8")
-                shutil.move(str(read_path), str(unread_path))
+                shutil.move(str(read_path), str(new_path))
             except OSError:
                 pass
         print(f"FAILED: {exc}", file=sys.stderr)

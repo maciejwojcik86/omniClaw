@@ -10,7 +10,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_SKILL_DIR = REPO_ROOT / "workspace" / "forms" / "deploy_new_agent" / "skills" / "deploy-new-nanobot"
-TEMPLATE_ROOT = REPO_ROOT / "workspace" / "agent_templates"
+TEMPLATE_ROOT = REPO_ROOT / "workspace" / "nanobot_workspace_templates"
 
 
 def _seed_repo_root(repo_root: Path) -> None:
@@ -19,7 +19,7 @@ def _seed_repo_root(repo_root: Path) -> None:
         "[project]\nname = 'nanobot-skill-test'\nversion = '0.0.0'\n",
         encoding="utf-8",
     )
-    shutil.copytree(TEMPLATE_ROOT, repo_root / "workspace" / "agent_templates", dirs_exist_ok=True)
+    shutil.copytree(TEMPLATE_ROOT, repo_root / "workspace" / "nanobot_workspace_templates", dirs_exist_ok=True)
 
 
 def _copy_skill_dir(*, repo_root: Path, source_relative: str, target_relative: str) -> Path:
@@ -82,7 +82,7 @@ def test_nanobot_skill_entrypoints_run_from_real_distributed_locations(
     assert expected_text in result.stdout
 
 
-def test_create_workspace_tree_uses_workspace_agent_templates(tmp_path: Path) -> None:
+def test_create_workspace_tree_uses_nanobot_workspace_templates(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     _seed_repo_root(repo_root)
     target_dir = _copy_skill_dir(
@@ -107,14 +107,14 @@ def test_create_workspace_tree_uses_workspace_agent_templates(tmp_path: Path) ->
     )
 
     assert (workspace_root / "HEARTBEAT.md").read_text(encoding="utf-8") == (
-        repo_root / "workspace" / "agent_templates" / "HEARTBEAT.md"
+        repo_root / "workspace" / "nanobot_workspace_templates" / "HEARTBEAT.md"
     ).read_text(encoding="utf-8")
     assert (workspace_root / "AGENTS.md").read_text(encoding="utf-8") == (
-        repo_root / "workspace" / "agent_templates" / "AGENTS.placeholder.md"
+        repo_root / "workspace" / "nanobot_workspace_templates" / "AGENTS.placeholder.md"
     ).read_text(encoding="utf-8")
 
 
-def test_init_nanobot_config_uses_workspace_agent_template(tmp_path: Path) -> None:
+def test_init_nanobot_config_uses_nanobot_workspace_template(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     _seed_repo_root(repo_root)
     target_dir = _copy_skill_dir(
@@ -147,7 +147,7 @@ def test_init_nanobot_config_uses_workspace_agent_template(tmp_path: Path) -> No
     assert payload["agents"]["defaults"]["workspace"] == str(workspace_root.resolve())
 
 
-def test_write_agent_instructions_uses_workspace_agent_template(tmp_path: Path) -> None:
+def test_write_agent_instructions_uses_nanobot_workspace_template(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     _seed_repo_root(repo_root)
     target_dir = _copy_skill_dir(
@@ -182,3 +182,7 @@ def test_write_agent_instructions_uses_workspace_agent_template(tmp_path: Path) 
     assert "Template Role" in text
     assert "Template_Test_01" in text
     assert "Director_01" in text
+    template_text = (
+        repo_root / "workspace" / "nanobots_instructions" / "Template_Test_01" / "AGENTS.md"
+    ).read_text(encoding="utf-8")
+    assert "{{node.role_name}}" in template_text

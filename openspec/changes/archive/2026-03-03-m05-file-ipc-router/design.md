@@ -56,11 +56,11 @@ User direction for M05 baseline:
 ### 4) Outbox Lifecycle Paths
 - **Chosen for M05:** Keep agent drafting in `outbox/drafts`, submit to router send queue, then transition to archive/dead-letter outcomes.
   - Send queue baseline: `outbox/sent` (user-requested operator flow)
-  - Compatibility read path: also accept `outbox/pending` during transition
+  - Compatibility read path: also accept `outbox/send` during transition
   - Success terminal path: `outbox/archive`
   - Failure path: `outbox/dead-letter`
 - **Rationale:** Matches requested user/agent SOP while preserving compatibility with earlier workspace scaffolding.
-- **Rejected alternative:** Only `outbox/pending` queue with no archive tier.
+- **Rejected alternative:** Only `outbox/send` queue with no archive tier.
 
 ### 5) Canonical DB Tracking Model
 - **Chosen for M05:** Extend `forms_ledger` with message routing metadata (sender, target, subject, filesystem paths, lifecycle timestamps, failure reason).

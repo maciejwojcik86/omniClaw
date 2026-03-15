@@ -8,7 +8,7 @@ The kernel SHALL scan outbound message queue files and route valid `MESSAGE` Mar
 
 #### Scenario: Valid message routed to destination inbox
 - **WHEN** a node places a valid `MESSAGE` markdown file in its outbound send queue
-- **THEN** the kernel routes the file to the destination node `inbox/unread` path and records routing success metadata
+- **THEN** the kernel routes the file to the destination node `inbox/new` path and records routing success metadata
 
 ### Requirement: MESSAGE Frontmatter SHALL Use Minimal Contract
 The router SHALL require a minimal frontmatter contract for `MESSAGE` forms and reject files that do not satisfy it.
@@ -53,13 +53,11 @@ The kernel SHALL persist each processed `MESSAGE` file with lifecycle status and
 ### Requirement: Router Filesystem Lifecycle SHALL Be Deterministic
 The router SHALL apply deterministic file transitions for routed and undelivered outcomes.
 
-#### Scenario: Successful delivery transitions to archive
-- **WHEN** message routing succeeds
-- **THEN** sender-side message file transitions from send queue to archive path while a delivered copy exists in destination inbox
-
 #### Scenario: Failed delivery transitions to dead-letter and feedback
-- **WHEN** message routing fails
-- **THEN** sender-side source file transitions from pending queue to dead-letter path, no destination payload is delivered as normal message, and a kernel-authored feedback artifact is delivered to target inbox (or sender inbox fallback)
+- **WHEN** a routed form fails validation or holder resolution
+- **THEN** sender-side source file transitions from pending queue to dead-letter path
+- **AND** no destination payload is delivered as a normal message
+- **AND** a kernel-authored feedback artifact is delivered to target `inbox/new` or sender `inbox/new` fallback
 
 ### Requirement: Kernel SHALL Provide Deterministic Router Scan Control
 The kernel SHALL expose an execution control path for router scans so tests and operators can trigger deterministic routing cycles.
@@ -88,4 +86,23 @@ The scan response MUST include deterministic filesystem paths for dead-lettered 
 #### Scenario: Undelivered item response contract
 - **WHEN** scan returns undelivered item
 - **THEN** item metadata includes `dead_letter_path` and `feedback_path` fields alongside failure reason
+
+### Requirement: IPC Scan SHALL Refresh Active Agent Instructions Before Routing
+Each IPC scan cycle SHALL refresh rendered `AGENTS.md` files for active AGENT nodes before processing queued outbound forms.
+
+#### Scenario: Manual scan refreshes AGENT instructions
+- **WHEN** an operator triggers an IPC scan action
+- **THEN** the kernel performs the AGENT instruction render sweep before processing queued form files
+
+#### Scenario: Background auto-scan refreshes AGENT instructions
+- **WHEN** the background IPC scan loop executes
+- **THEN** the same render sweep runs before queued form processing without requiring a separate scheduler
+
+### Requirement: Instruction Render Failures SHALL Not Block Form Routing
+Instruction render failures during an IPC scan MUST be reported separately and MUST NOT prevent queued-form routing for other nodes in the same scan cycle.
+
+#### Scenario: One AGENT render fails during scan
+- **WHEN** the scan encounters a render error for one AGENT template
+- **THEN** the kernel keeps the last good `AGENTS.md` for that node
+- **AND** continues processing queued form files for the rest of the scan cycle
 

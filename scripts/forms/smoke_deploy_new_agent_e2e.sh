@@ -273,8 +273,8 @@ prepare_pending_decision_copy() {
   local holder_workspace="$1"
   local decision="$2"
   local stale_marker="$3"
-  local source="$holder_workspace/inbox/unread/$request_file"
-  local target="$holder_workspace/outbox/pending/$request_file"
+  local source="$holder_workspace/inbox/new/$request_file"
+  local target="$holder_workspace/outbox/send/$request_file"
 
   if [[ "$dry_run" -eq 1 ]]; then
     echo "DRY-RUN: prepare pending decision '$decision' from $source -> $target"
@@ -426,7 +426,7 @@ for agent_name in Director_01 HR_Head_01 Ops_Head_01; do
 done
 
 log_step "2/8" "Seed deploy_new_agent request in initiator outbox queue"
-request_path="$initiator_workspace/outbox/pending/$request_file"
+request_path="$initiator_workspace/outbox/send/$request_file"
 if [[ -e "$request_path" ]]; then
   echo "Request file already exists: $request_path" >&2
   exit 1
@@ -508,7 +508,7 @@ for ((idx = 0; idx < ${#STAGE_PATH[@]} - 1; idx++)); do
     exit 1
   fi
 
-  delivered_path="$holder_workspace/inbox/unread/$request_file"
+  delivered_path="$holder_workspace/inbox/new/$request_file"
   expected_stage_skill="$(workflow_query "$next_stage" "required_skill")"
   expected_skill_copy="$holder_workspace/skills/$expected_stage_skill/SKILL.md"
 
@@ -537,7 +537,7 @@ for ((idx = 0; idx < ${#STAGE_PATH[@]} - 1; idx++)); do
   log_step "4/8" "Prepare holder action for stage $next_stage (decision: $holder_decision)"
   if [[ "$skip_agent_runs" -eq 0 && "$holder_type" == "AGENT" && -n "$holder_config" ]]; then
     run_holder_heartbeat "$holder_name" "$holder_workspace" "$holder_config"
-    pending_path="$holder_workspace/outbox/pending/$request_file"
+    pending_path="$holder_workspace/outbox/send/$request_file"
     if [[ "$dry_run" -eq 0 && ! -f "$pending_path" ]]; then
       if [[ "$allow_agent_fallback" -eq 1 ]]; then
         echo "Agent '$holder_name' did not produce pending decision file; applying fallback copy."

@@ -1,3 +1,4 @@
+from unittest.mock import patch, AsyncMock
 import json
 from pathlib import Path
 import sys
@@ -19,7 +20,8 @@ from omniclaw.db.session import create_session_factory
 from tests.helpers import migrate_database_to_head
 
 
-def test_register_human_in_mock_mode_creates_human_node_and_workspace(tmp_path: Path) -> None:
+@patch("omniclaw.provisioning.service.load_settings")
+def test_register_human_in_mock_mode_creates_human_node_and_workspace(mock_load_settings, tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'human.db'}"
     workspace_root = tmp_path / "workspace" / "macos"
 
@@ -31,6 +33,7 @@ def test_register_human_in_mock_mode_creates_human_node_and_workspace(tmp_path: 
         provisioning_mode="mock",
         allow_privileged_provisioning=False,
     )
+    mock_load_settings.return_value = settings
     migrate_database_to_head(database_url)
     app = create_app(settings)
     client = TestClient(app)
@@ -60,10 +63,18 @@ def test_register_human_in_mock_mode_creates_human_node_and_workspace(tmp_path: 
     assert payload["line_management"]["has_subordinate"] is False
 
 
-def test_provision_agent_in_mock_mode_updates_nodes_and_hierarchy(tmp_path: Path) -> None:
+@patch("omniclaw.provisioning.service.load_settings")
+@patch("omniclaw.provisioning.service.LiteLLMClient")
+def test_provision_agent_in_mock_mode_updates_nodes_and_hierarchy(mock_client_class, mock_load_settings, tmp_path: Path) -> None:
+    # Setup mock
+    mock_instance = AsyncMock()
+    mock_instance.generate_virtual_key.return_value = {"key": "sk-virtual-123"}
+    mock_client_class.return_value = mock_instance
+
     database_url = f"sqlite:///{tmp_path / 'provisioning.db'}"
     workspace_root = tmp_path / "workspace" / "agents" / "Director_01" / "workspace"
     expected_config_path = workspace_root.parent / "config.json"
+    expected_template_root = tmp_path / "workspace" / "nanobots_instructions" / "Director_01"
 
     settings = Settings(
         app_name="omniclaw-kernel",
@@ -72,7 +83,10 @@ def test_provision_agent_in_mock_mode_updates_nodes_and_hierarchy(tmp_path: Path
         database_url=database_url,
         provisioning_mode="mock",
         allow_privileged_provisioning=False,
+        litellm_proxy_url="http://localhost:4000",
+        litellm_master_key="sk-master",
     )
+    mock_load_settings.return_value = settings
     migrate_database_to_head(database_url)
     app = create_app(settings)
 
@@ -96,6 +110,7 @@ def test_provision_agent_in_mock_mode_updates_nodes_and_hierarchy(tmp_path: Path
                 "root": str(workspace_root),
                 "scaffold": True,
             },
+            "role_name": "Director",
             "manager_group": "sudo",
             "manager_node_id": manager.id,
             "autonomy_level": 3,
@@ -108,16 +123,23 @@ def test_provision_agent_in_mock_mode_updates_nodes_and_hierarchy(tmp_path: Path
     assert payload["mode"] == "mock"
     assert "user" not in payload
     assert payload["node"]["name"] == "Director_01"
+    assert payload["node"]["role_name"] == "Director"
     assert payload["node"]["status"] == NodeStatus.ACTIVE.value
     assert payload["node"]["autonomy_level"] == 3
     assert payload["node"]["linux_username"] == "agent_director_01"
     assert payload["node"]["workspace_root"] == str(workspace_root.resolve())
     assert payload["node"]["runtime_config_path"] == str(expected_config_path.resolve())
+    assert payload["node"]["instruction_template_root"] == str(expected_template_root.resolve())
     assert payload["node"]["primary_model"] == "openai-codex/gpt-5.4"
     assert payload["node"]["password_present"] is False
     assert payload["runtime_config"]["path"] == str(expected_config_path.resolve())
     assert payload["runtime_config"]["created"] is True
+    assert payload["instructions"]["status"] == "rendered"
     assert expected_config_path.exists()
+    assert (expected_template_root / "AGENTS.md").exists()
+    rendered_agents = (workspace_root / "AGENTS.md").read_text(encoding="utf-8")
+    assert "Role: Director" in rendered_agents
+    assert "Node: Director_01" in rendered_agents
     written_config = json.loads(expected_config_path.read_text(encoding="utf-8"))
     assert written_config["agents"]["defaults"]["workspace"] == str(workspace_root.resolve())
 
@@ -129,8 +151,13 @@ def test_provision_agent_in_mock_mode_updates_nodes_and_hierarchy(tmp_path: Path
     children = repository.list_children(parent_node_id=manager.id)
     assert len(children) == 1
 
+    budget = repository.get_budget(node_id=payload["node"]["id"])
+    assert budget is not None
+    assert budget.virtual_api_key == "sk-virtual-123"
 
-def test_system_mode_is_blocked_when_privileged_flag_disabled(tmp_path: Path) -> None:
+
+@patch("omniclaw.provisioning.service.load_settings")
+def test_system_mode_is_blocked_when_privileged_flag_disabled(mock_load_settings, tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'system-blocked.db'}"
 
     settings = Settings(
@@ -141,6 +168,7 @@ def test_system_mode_is_blocked_when_privileged_flag_disabled(tmp_path: Path) ->
         provisioning_mode="system",
         allow_privileged_provisioning=False,
     )
+    mock_load_settings.return_value = settings
     migrate_database_to_head(database_url)
     app = create_app(settings)
     client = TestClient(app)
@@ -157,7 +185,13 @@ def test_system_mode_is_blocked_when_privileged_flag_disabled(tmp_path: Path) ->
     assert "System provisioning is disabled" in response.json()["detail"]
 
 
-def test_provision_agent_syncs_model_and_plain_password(tmp_path: Path) -> None:
+@patch("omniclaw.provisioning.service.load_settings")
+@patch("omniclaw.provisioning.service.LiteLLMClient")
+def test_provision_agent_syncs_model_and_plain_password(mock_client_class, mock_load_settings, tmp_path: Path) -> None:
+    mock_instance = AsyncMock()
+    mock_instance.generate_virtual_key.return_value = {"key": "sk-virtual-123"}
+    mock_client_class.return_value = mock_instance
+
     database_url = f"sqlite:///{tmp_path / 'sync.db'}"
     workspace_root = tmp_path / "workspace" / "agents" / "Director_01" / "workspace"
     config_path = workspace_root.parent / "config.json"
@@ -180,6 +214,7 @@ def test_provision_agent_syncs_model_and_plain_password(tmp_path: Path) -> None:
         provisioning_mode="mock",
         allow_privileged_provisioning=False,
     )
+    mock_load_settings.return_value = settings
     migrate_database_to_head(database_url)
     app = create_app(settings)
     repository = KernelRepository(create_session_factory(database_url))
@@ -228,7 +263,13 @@ def test_provision_agent_syncs_model_and_plain_password(tmp_path: Path) -> None:
         assert node.linux_password == "haslo"
 
 
-def test_provision_agent_allows_node_name_without_linux_username(tmp_path: Path) -> None:
+@patch("omniclaw.provisioning.service.load_settings")
+@patch("omniclaw.provisioning.service.LiteLLMClient")
+def test_provision_agent_allows_node_name_without_linux_username(mock_client_class, mock_load_settings, tmp_path: Path) -> None:
+    mock_instance = AsyncMock()
+    mock_instance.generate_virtual_key.return_value = {"key": "sk-virtual-123"}
+    mock_client_class.return_value = mock_instance
+
     database_url = f"sqlite:///{tmp_path / 'node-name-only.db'}"
     workspace_root = tmp_path / "workspace" / "agents" / "Planner_01" / "workspace"
 
@@ -240,6 +281,7 @@ def test_provision_agent_allows_node_name_without_linux_username(tmp_path: Path)
         provisioning_mode="mock",
         allow_privileged_provisioning=False,
     )
+    mock_load_settings.return_value = settings
     migrate_database_to_head(database_url)
     app = create_app(settings)
     repository = KernelRepository(create_session_factory(database_url))
@@ -266,12 +308,15 @@ def test_provision_agent_allows_node_name_without_linux_username(tmp_path: Path)
     assert response.status_code == 200
     payload = response.json()
     assert payload["node"]["name"] == "Planner_01"
+    assert payload["node"]["role_name"] is None
     assert payload["node"]["linux_username"] is None
     assert payload["node"]["workspace_root"] == str(workspace_root.resolve())
     assert payload["node"]["runtime_config_path"] == str((workspace_root.parent / "config.json").resolve())
 
 
-def test_provision_agent_requires_manager_reference(tmp_path: Path) -> None:
+@patch("omniclaw.provisioning.service.load_settings")
+@patch("omniclaw.provisioning.service.LiteLLMClient")
+def test_provision_agent_requires_manager_reference(mock_client_class, mock_load_settings, tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'manager-required.db'}"
     workspace_root = tmp_path / "workspace" / "agents" / "Director_01" / "workspace"
     settings = Settings(
@@ -282,6 +327,8 @@ def test_provision_agent_requires_manager_reference(tmp_path: Path) -> None:
         provisioning_mode="mock",
         allow_privileged_provisioning=False,
     )
+    mock_load_settings.return_value = settings
+    mock_load_settings.return_value = settings
     migrate_database_to_head(database_url)
     app = create_app(settings)
     client = TestClient(app)
@@ -302,7 +349,13 @@ def test_provision_agent_requires_manager_reference(tmp_path: Path) -> None:
     assert "manager_node_id or manager_node_name is required" in response.json()["detail"]
 
 
-def test_provision_agent_accepts_agent_manager(tmp_path: Path) -> None:
+@patch("omniclaw.provisioning.service.load_settings")
+@patch("omniclaw.provisioning.service.LiteLLMClient")
+def test_provision_agent_accepts_agent_manager(mock_client_class, mock_load_settings, tmp_path: Path) -> None:
+    mock_instance = AsyncMock()
+    mock_instance.generate_virtual_key.return_value = {"key": "sk-virtual-123"}
+    mock_client_class.return_value = mock_instance
+
     database_url = f"sqlite:///{tmp_path / 'agent-manager.db'}"
     workspace_root = tmp_path / "workspace" / "agents" / "Worker_01" / "workspace"
     settings = Settings(
@@ -313,6 +366,7 @@ def test_provision_agent_accepts_agent_manager(tmp_path: Path) -> None:
         provisioning_mode="mock",
         allow_privileged_provisioning=False,
     )
+    mock_load_settings.return_value = settings
     migrate_database_to_head(database_url)
     app = create_app(settings)
     repository = KernelRepository(create_session_factory(database_url))
@@ -343,7 +397,13 @@ def test_provision_agent_accepts_agent_manager(tmp_path: Path) -> None:
     assert payload["manager"]["name"] == "Director_01"
 
 
-def test_provision_agent_rejects_second_manager_for_same_node(tmp_path: Path) -> None:
+@patch("omniclaw.provisioning.service.load_settings")
+@patch("omniclaw.provisioning.service.LiteLLMClient")
+def test_provision_agent_rejects_second_manager_for_same_node(mock_client_class, mock_load_settings, tmp_path: Path) -> None:
+    mock_instance = AsyncMock()
+    mock_instance.generate_virtual_key.return_value = {"key": "sk-virtual-123"}
+    mock_client_class.return_value = mock_instance
+
     database_url = f"sqlite:///{tmp_path / 'single-manager.db'}"
     workspace_root = tmp_path / "workspace" / "agents" / "Director_01" / "workspace"
     settings = Settings(
@@ -354,6 +414,7 @@ def test_provision_agent_rejects_second_manager_for_same_node(tmp_path: Path) ->
         provisioning_mode="mock",
         allow_privileged_provisioning=False,
     )
+    mock_load_settings.return_value = settings
     migrate_database_to_head(database_url)
     app = create_app(settings)
     repository = KernelRepository(create_session_factory(database_url))
@@ -402,7 +463,8 @@ def test_provision_agent_rejects_second_manager_for_same_node(tmp_path: Path) ->
     assert "already has manager" in second.json()["detail"]
 
 
-def test_set_line_manager_links_existing_agent_node(tmp_path: Path) -> None:
+@patch("omniclaw.provisioning.service.load_settings")
+def test_set_line_manager_links_existing_agent_node(mock_load_settings, tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'set-manager.db'}"
     settings = Settings(
         app_name="omniclaw-kernel",
@@ -412,6 +474,7 @@ def test_set_line_manager_links_existing_agent_node(tmp_path: Path) -> None:
         provisioning_mode="mock",
         allow_privileged_provisioning=False,
     )
+    mock_load_settings.return_value = settings
     migrate_database_to_head(database_url)
     app = create_app(settings)
     repository = KernelRepository(create_session_factory(database_url))

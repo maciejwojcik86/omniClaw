@@ -15,6 +15,7 @@ from omniclaw.config import Settings
 from omniclaw.db.models import FormLedger, FormTypeDefinition, Node
 from omniclaw.db.repository import KernelRepository
 from omniclaw.forms.schemas import FormsActionRequest
+from omniclaw.instructions.service import InstructionsService
 from omniclaw.forms.service import FormsService
 from omniclaw.ipc.schemas import IpcActionRequest
 
@@ -33,10 +34,15 @@ class IpcRouterService:
         *,
         settings: Settings,
         repository: KernelRepository,
+        instructions_service: InstructionsService | None = None,
     ) -> None:
         self._settings = settings
         self._repository = repository
         self._forms_service = FormsService(repository=repository)
+        self._instructions_service = instructions_service or InstructionsService(
+            settings=settings,
+            repository=repository,
+        )
 
     def execute(self, request: IpcActionRequest) -> dict[str, object]:
         if request.action not in {"scan_messages", "scan_forms"}:
@@ -45,6 +51,7 @@ class IpcRouterService:
 
     def _scan_forms(self, *, limit: int, action: str) -> dict[str, object]:
         started = time.monotonic()
+        instructions_sync = self._sync_instructions_prepass()
         items: list[dict[str, object]] = []
         scanned = 0
         routed = 0
@@ -117,11 +124,37 @@ class IpcRouterService:
                 "routed": routed,
                 "undelivered": undelivered,
                 "skipped": skipped,
+                "instructions_rendered": int(instructions_sync.get("summary", {}).get("rendered", 0)),
+                "instructions_failed": int(instructions_sync.get("summary", {}).get("failed", 0)),
                 "duration_ms": int((finished - started) * 1000),
                 "scan_interval_seconds": self._settings.ipc_router_scan_interval_seconds,
             },
+            "instructions_sync": instructions_sync,
             "items": items,
         }
+
+    def _sync_instructions_prepass(self) -> dict[str, object]:
+        try:
+            return self._instructions_service.sync_all_active_agents()
+        except Exception as exc:
+            return {
+                "action": "sync_render",
+                "scope": "all_active_agents",
+                "summary": {
+                    "scanned": 0,
+                    "rendered": 0,
+                    "failed": 1,
+                },
+                "skill_distribution": {
+                    "skill_name": InstructionsService.MANAGER_SKILL_NAME,
+                    "status": "failed",
+                    "installed": 0,
+                    "removed": 0,
+                    "items": [],
+                },
+                "items": [],
+                "error": str(exc),
+            }
 
     def _try_claim_source_file(self, source_path: Path) -> TextIO | None:
         try:
@@ -517,7 +550,9 @@ class IpcRouterService:
             "in_reply_to",
             "initiator_node_id",
             "target_node_id",
+            "agent",
             "stage_skill",
+            "target_agent",
             "previous_decision",
             "previous_transition",
             "transition",
@@ -528,11 +563,19 @@ class IpcRouterService:
                 "form_type": form_type,
                 "form_id": form_id,
                 "stage": next_stage,
+                "agent": target_node.name if target_node is not None else "",
                 "stage_skill": required_skill or "",
                 "decision": "",
                 "sender": sender.name,
-                "target": target_node.name if target_node is not None else "none",
+                # `target` remains an authoring-time routing input for queued forms.
+                "target": "",
             }
+        )
+        routed_frontmatter["target_agent"] = self._build_target_agent_hint(
+            stage_graph=stage_graph,
+            stage_name=next_stage,
+            frontmatter=routed_frontmatter,
+            initiator_node_id=initiator_node_id,
         )
         routed_content = self._render_frontmatter(
             frontmatter=routed_frontmatter,
@@ -571,7 +614,7 @@ class IpcRouterService:
                     decision=decision_key,
                     next_stage=next_stage,
                 )
-            inbox_dir = self._resolve_within_workspace(target_workspace, self._settings.ipc_inbox_unread_rel)
+            inbox_dir = self._resolve_within_workspace(target_workspace, self._settings.ipc_inbox_new_rel)
             if inbox_dir is None:
                 return self._undelivered(
                     sender=sender,
@@ -946,6 +989,111 @@ class IpcRouterService:
             return None, "single", {}, f"target '{target}' not found"
         return node, "single", {}, None
 
+    def _build_target_agent_hint(
+        self,
+        *,
+        stage_graph: dict[str, Any],
+        stage_name: str,
+        frontmatter: dict[str, Any],
+        initiator_node_id: str,
+    ) -> str:
+        stages = stage_graph.get("stages")
+        if not isinstance(stages, dict):
+            return ""
+
+        stage_payload = stages.get(stage_name)
+        decisions = self._stage_decisions(stage_payload)
+        if not isinstance(decisions, dict) or not decisions:
+            return ""
+
+        lines: list[str] = []
+        target_labels: list[str] = []
+        for decision_key, raw_next_stage in decisions.items():
+            if not isinstance(decision_key, str) or not decision_key.strip():
+                continue
+            if not isinstance(raw_next_stage, str) or not raw_next_stage.strip():
+                continue
+
+            target_label = self._describe_stage_target(
+                stage_graph=stage_graph,
+                stage_name=raw_next_stage.strip(),
+                frontmatter=frontmatter,
+                initiator_node_id=initiator_node_id,
+            )
+            target_labels.append(target_label)
+            lines.append(f"{decision_key.strip()}: {target_label}")
+
+        if not lines or all(label == "none" for label in target_labels):
+            return ""
+        return "Leave one option that matches the chosen decision and delete the others:\n" + "\n".join(lines)
+
+    def _describe_stage_target(
+        self,
+        *,
+        stage_graph: dict[str, Any],
+        stage_name: str,
+        frontmatter: dict[str, Any],
+        initiator_node_id: str,
+    ) -> str:
+        stages = stage_graph.get("stages")
+        if not isinstance(stages, dict):
+            return "none"
+        stage_payload = stages.get(stage_name)
+        if not isinstance(stage_payload, dict):
+            return "none"
+        return self._describe_target_spec(
+            target_spec=stage_payload.get("target"),
+            frontmatter=frontmatter,
+            initiator_node_id=initiator_node_id,
+        )
+
+    def _describe_target_spec(
+        self,
+        *,
+        target_spec: Any,
+        frontmatter: dict[str, Any],
+        initiator_node_id: str,
+    ) -> str:
+        if target_spec is None:
+            return "none"
+        if not isinstance(target_spec, str) or not target_spec.strip():
+            return "none"
+
+        target = target_spec.strip()
+        if target.lower() in {"none", "null", "{{none}}"}:
+            return "none"
+
+        if target == "{{initiator}}":
+            initiator = self._repository.get_node(node_id=initiator_node_id)
+            return initiator.name if initiator is not None else "{{initiator}}"
+
+        if target == "{{any}}":
+            return "{{any}}"
+
+        variable_match = re.fullmatch(r"\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}", target)
+        if variable_match:
+            var_name = variable_match.group(1)
+            if var_name == "initiator":
+                initiator = self._repository.get_node(node_id=initiator_node_id)
+                return initiator.name if initiator is not None else "{{initiator}}"
+            if var_name == "any":
+                return "{{any}}"
+
+            candidate = self._optional_str(frontmatter.get(f"{var_name}_node_id")) or self._optional_str(
+                frontmatter.get(var_name)
+            )
+            if candidate:
+                node, error = self._resolve_node_reference(candidate)
+                if error is None and node is not None:
+                    return node.name
+                return candidate
+            return target
+
+        node, error = self._resolve_node_reference(target)
+        if error is None and node is not None:
+            return node.name
+        return target
+
     def _resolve_node_reference(self, value: str) -> tuple[Node | None, str | None]:
         return self._repository.resolve_unique_node_reference(value)
 
@@ -1235,7 +1383,7 @@ class IpcRouterService:
         workspace = self._resolve_workspace_root(recipient)
         if workspace is None:
             return None
-        inbox_dir = self._resolve_within_workspace(workspace, self._settings.ipc_inbox_unread_rel)
+        inbox_dir = self._resolve_within_workspace(workspace, self._settings.ipc_inbox_new_rel)
         if inbox_dir is None:
             return None
 
@@ -1311,7 +1459,27 @@ class IpcRouterService:
             return {}, content, "missing YAML frontmatter closing delimiter"
 
         frontmatter: dict[str, str] = {}
+        current_block_key: str | None = None
+        current_block_lines: list[str] = []
+
+        def flush_block() -> None:
+            nonlocal current_block_key, current_block_lines
+            if current_block_key is None:
+                return
+            frontmatter[current_block_key] = "\n".join(current_block_lines).rstrip("\n")
+            current_block_key = None
+            current_block_lines = []
+
         for line in lines[1:closing_index]:
+            if current_block_key is not None:
+                if line.startswith("  "):
+                    current_block_lines.append(line[2:])
+                    continue
+                if line == "":
+                    current_block_lines.append("")
+                    continue
+                flush_block()
+
             stripped = line.strip()
             if not stripped:
                 continue
@@ -1322,12 +1490,18 @@ class IpcRouterService:
             value = value.strip().strip('"').strip("'")
             if not key:
                 return {}, content, "frontmatter key must not be empty"
+            if value in {"|", "|-", "|+"}:
+                current_block_key = key
+                current_block_lines = []
+                continue
             frontmatter[key] = value
+
+        flush_block()
 
         body = "\n".join(lines[closing_index + 1 :])
         return frontmatter, body, None
 
-    def _render_frontmatter(self, *, frontmatter: dict[str, str], body: str) -> str:
+    def _render_frontmatter(self, *, frontmatter: dict[str, Any], body: str) -> str:
         lines = ["---"]
         for key, value in frontmatter.items():
             if key is None:
@@ -1338,8 +1512,13 @@ class IpcRouterService:
             if value is None:
                 normalized_value = ""
             else:
-                normalized_value = str(value).strip()
-            lines.append(f"{normalized_key}: {normalized_value}")
+                normalized_value = str(value).strip("\n")
+            if "\n" in normalized_value:
+                lines.append(f"{normalized_key}: |")
+                for value_line in normalized_value.split("\n"):
+                    lines.append(f"  {value_line}")
+                continue
+            lines.append(f"{normalized_key}: {normalized_value.strip()}")
         lines.append("---")
         if body:
             return "\n".join(lines) + "\n\n" + body.rstrip("\n") + "\n"

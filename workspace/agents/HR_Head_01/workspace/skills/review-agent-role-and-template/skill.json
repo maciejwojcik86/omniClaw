@@ -1,0 +1,6 @@
+{
+  "name": "review-agent-role-and-template",
+  "version": "1.0.0",
+  "description": "Perform HR_REVIEW for deploy_new_agent forms and decide whether to move to finance or return for revision.",
+  "author": "omniclaw-kernel"
+}

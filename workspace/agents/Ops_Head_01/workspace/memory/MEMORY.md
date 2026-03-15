@@ -1,0 +1,36 @@
+# MEMORY
+
+- Workspace context observed: current agent is `Ops_Head_01` with workspace rooted at `/home/macos/omniClaw/workspace/agents/Ops_Head_01/workspace`.
+- `Ops_Head_01` durable instructions (from `AGENTS.md`) include: read `inbox/new` first; draft formal MESSAGE replies in `outbox/drafts/` and submit via `outbox/send/`; use `drafts/` for non-message artifacts; treat `SOUL.md`, `USER.md`, `TOOLS.md`, `memory/MEMORY.md`, and `memory/HISTORY.md` as durable context; follow `HEARTBEAT.md`.
+- HEARTBEAT behavior changed during the observed conversation:
+  - Earlier version: check the legacy delivery inbox path and run only `python3 skills/read-and-acknowledge-internal-message/scripts/acknowledge_and_archive_message.py --apply --workspace-root <this_workspace_root> --form-file <unread_filename>` for unread `message` forms.
+  - Later version: process one unread form fully, read `stage_skill`, open and follow the referenced skill instructions/template, append a stage response to the same form, set a valid `decision`, do not edit `stage` manually, and rely on kernel routing.
+- Important operational lesson: the `acknowledge_and_archive_message.py` tool rejects non-message forms with error `Expected form_type=message, got 'deploy_new_agent'`.
+- Observed smoke-test forms in the delivery inbox on 2026-03-06 had `form_type: deploy_new_agent` and should not be processed with the message acknowledge tool:
+  - `2026-03-06-m07b-nanobot-smoke-2.md`
+  - `2026-03-06-m07b-nanobot-smoke-3.md`
+  - `2026-03-06-m07b-nanobot-smoke-4.md`
+  - `2026-03-06-m07b-nanobot-smoke.md`
+- Those smoke-test forms targeted `Ops_Head_01`, were sent by `Macos_Supervisor`, had subject `M07 deploy_new_agent e2e smoke`, stage `AGENT_DEPLOYMENT`, and used `stage_skill` values `deploy-new-nanobot` (most variants) or `deploy-new-claw-agent` (one variant).
+- Confirmed pattern: when unread files are non-`message` deploy forms under the earlier heartbeat rules, the correct outcome was effectively no ack action and reporting/returning `HEARTBEAT_OK` after identifying there were no unread message forms to run.
+- A later unread deployment request was processed under the newer heartbeat workflow:
+  - File: `2026-03-05-deploy-request-signal-cartographer.md`
+  - `form_type: deploy_new_agent`
+  - `stage: AGENT_DEPLOYMENT`
+  - `target: Ops_Head_01`
+  - `sender: Macos_Supervisor`
+  - `subject: Deploy request - Signal Cartographer (Cross-Team Workflow Intelligence)`
+  - `stage_skill: deploy-new-nanobot`
+- The `deploy-new-nanobot` skill metadata/instructions observed:
+  - Stage: `AGENT_DEPLOYMENT`
+  - Allowed decision: `deploy_and_archive`
+  - Includes `AGENTS_AUTHORING.md`, `WORKFLOW.md`, templates, and wrapper scripts in `skills/deploy-new-nanobot/scripts/`.
+- Deployment template/report guidance was read, including sections for execution summary, deployment inputs, commands/actions, artifact paths, packaged Nanobot source archive, outcome, and follow-ups.
+- Environment/sandbox constraints discovered while attempting deployment work:
+  - Direct listing of `/home/macos/omniClaw/workspace/agents` was blocked as outside allowed directory.
+  - `/home/macos/omniClaw/workspace/agents/Ops_Head_01/workspace/config.json` did not exist; sibling-config layout appears to place `config.json` outside workspace root.
+  - Direct reads/commands targeting canonical provisioning scripts outside the working dir were blocked by safety guard.
+  - In-workspace wrapper script `skills/deploy-new-nanobot/scripts/deploy_new_nanobot_agent.sh` was readable and delegates to repo-root `scripts/provisioning/deploy_new_nanobot.sh`.
+- Artifact created during deployment preparation:
+  - `drafts/signal-cartographer-AGENTS.md` was successfully written in the current workspace as a draft instruction file for the requested new agent.
+- No successful deployment, form frontmatter decision update, appended stage response, or archive move is visible in the provided conversation excerpt yet.

@@ -1,0 +1,10 @@
+{
+  "instructions": {
+    "access_scope": "descendant"
+  },
+  "budgeting": {
+    "daily_company_budget_usd": 3.0,
+    "root_allocator_node": "Director_01",
+    "reset_time_utc": "00:00"
+  }
+}

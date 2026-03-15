@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 import json
 from pathlib import Path
 import re
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import desc, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm.exc import StaleDataError
@@ -18,12 +19,28 @@ from omniclaw.db.enums import (
     NodeType,
     RelationshipType,
     SkillValidationStatus,
+    BudgetMode,
 )
-from omniclaw.db.models import FormLedger, FormTransitionEvent, FormTypeDefinition, Hierarchy, MasterSkill, Node
+from omniclaw.db.models import (
+    AgentLLMCall,
+    AgentSessionExport,
+    Budget,
+    BudgetAllocation,
+    BudgetCycle,
+    FormLedger,
+    FormTransitionEvent,
+    FormTypeDefinition,
+    Hierarchy,
+    MasterSkill,
+    Node,
+)
 
 
 class TransitionConflictError(RuntimeError):
     pass
+
+
+_UNSET = object()
 
 
 class KernelRepository:
@@ -36,11 +53,13 @@ class KernelRepository:
         node_type: NodeType,
         name: str,
         status: NodeStatus,
+        role_name: str | None = None,
         linux_uid: int | None = None,
         linux_username: str | None = None,
         linux_password: str | None = None,
         workspace_root: str | None = None,
         runtime_config_path: str | None = None,
+        instruction_template_root: str | None = None,
         primary_model: str | None = None,
         autonomy_level: int = 0,
     ) -> Node:
@@ -48,12 +67,14 @@ class KernelRepository:
             node = Node(
                 type=node_type,
                 name=name,
+                role_name=role_name,
                 status=status,
                 linux_uid=linux_uid,
                 linux_username=linux_username,
                 linux_password=linux_password,
                 workspace_root=workspace_root,
                 runtime_config_path=runtime_config_path,
+                instruction_template_root=instruction_template_root,
                 primary_model=primary_model,
                 autonomy_level=autonomy_level,
             )
@@ -68,11 +89,13 @@ class KernelRepository:
         node_type: NodeType,
         name: str,
         status: NodeStatus,
+        role_name: str | None = None,
         linux_uid: int | None = None,
         linux_username: str | None = None,
         linux_password: str | None = None,
         workspace_root: str | None = None,
         runtime_config_path: str | None = None,
+        instruction_template_root: str | None = None,
         primary_model: str | None = None,
         autonomy_level: int = 0,
     ) -> tuple[Node, bool]:
@@ -85,12 +108,14 @@ class KernelRepository:
             )
             if existing is not None:
                 existing.status = status
+                existing.role_name = role_name
                 existing.linux_uid = linux_uid
                 existing.linux_username = linux_username
                 if linux_password is not None:
                     existing.linux_password = linux_password
                 existing.workspace_root = workspace_root
                 existing.runtime_config_path = runtime_config_path
+                existing.instruction_template_root = instruction_template_root
                 existing.primary_model = primary_model
                 existing.autonomy_level = autonomy_level
                 session.commit()
@@ -100,12 +125,14 @@ class KernelRepository:
             created = Node(
                 type=node_type,
                 name=name,
+                role_name=role_name,
                 status=status,
                 linux_uid=linux_uid,
                 linux_username=linux_username,
                 linux_password=linux_password,
                 workspace_root=workspace_root,
                 runtime_config_path=runtime_config_path,
+                instruction_template_root=instruction_template_root,
                 primary_model=primary_model,
                 autonomy_level=autonomy_level,
             )
@@ -169,6 +196,32 @@ class KernelRepository:
                 .filter(Hierarchy.parent_node_id == parent_node_id)
                 .order_by(Hierarchy.created_at.asc())
                 .all()
+            )
+
+    def list_child_nodes(
+        self,
+        *,
+        parent_node_id: str,
+        node_type: NodeType | None = None,
+    ) -> list[Node]:
+        with self._session_factory() as session:
+            query = (
+                session.query(Node)
+                .join(Hierarchy, Hierarchy.child_node_id == Node.id)
+                .filter(Hierarchy.parent_node_id == parent_node_id)
+            )
+            if node_type is not None:
+                query = query.filter(Node.type == node_type)
+            return query.order_by(Node.created_at.asc()).all()
+
+    def get_manager_node(self, *, child_node_id: str) -> Node | None:
+        with self._session_factory() as session:
+            return (
+                session.query(Node)
+                .join(Hierarchy, Hierarchy.parent_node_id == Node.id)
+                .filter(Hierarchy.child_node_id == child_node_id)
+                .order_by(Hierarchy.created_at.asc(), Node.created_at.asc())
+                .first()
             )
 
     def get_node(
@@ -255,6 +308,351 @@ class KernelRepository:
                 .first()
             )
             return link is not None
+
+    def update_node_instruction_fields(
+        self,
+        *,
+        node_id: str,
+        role_name: str | None = None,
+        instruction_template_root: str | None = None,
+    ) -> Node:
+        with self._session_factory() as session:
+            node = (
+                session.query(Node)
+                .filter(Node.id == node_id)
+                .order_by(Node.created_at.asc())
+                .first()
+            )
+            if node is None:
+                raise ValueError(f"node '{node_id}' not found")
+
+            if role_name is not None:
+                node.role_name = role_name
+            if instruction_template_root is not None:
+                node.instruction_template_root = instruction_template_root
+            session.commit()
+            session.refresh(node)
+            return node
+
+    def update_node_instruction_fields(
+        self,
+        *,
+        node_id: str,
+        role_name: str | None = None,
+        instruction_template_root: str | None = None,
+    ) -> Node:
+        with self._session_factory() as session:
+            node = (
+                session.query(Node)
+                .filter(Node.id == node_id)
+                .order_by(Node.created_at.asc())
+                .first()
+            )
+            if node is None:
+                raise ValueError(f"node '{node_id}' not found")
+
+            if role_name is not None:
+                node.role_name = role_name
+            if instruction_template_root is not None:
+                node.instruction_template_root = instruction_template_root
+            session.commit()
+            session.refresh(node)
+            return node
+
+    # ---------------------------------------------------------------------
+    # Budget tracking operations
+    # ---------------------------------------------------------------------
+
+    def upsert_budget(
+        self,
+        *,
+        node_id: str,
+        virtual_api_key: str | None = None,
+        daily_limit_usd: Decimal | float | int | str | None = None,
+        current_daily_allowance: Decimal | float | int | str | None = None,
+        current_spend: Decimal | float | int | str | None = None,
+        parent_node_id: str | None | object = _UNSET,
+        allocated_percentage: Decimal | float | int | str | None = None,
+        budget_mode: BudgetMode | str | None = None,
+        rollover_reserve_usd: Decimal | float | int | str | None = None,
+        review_required_at: datetime | None | object = _UNSET,
+    ) -> Budget:
+        with self._session_factory() as session:
+            budget = session.query(Budget).filter(Budget.node_id == node_id).first()
+            if budget is None:
+                budget = Budget(
+                    node_id=node_id,
+                    virtual_api_key=virtual_api_key,
+                )
+                if daily_limit_usd is not None:
+                    budget.daily_limit_usd = self._to_decimal(daily_limit_usd)
+                if current_daily_allowance is not None:
+                    budget.current_daily_allowance = self._to_decimal(current_daily_allowance)
+                if current_spend is not None:
+                    budget.current_spend = self._to_decimal(current_spend)
+                if parent_node_id is not _UNSET:
+                    budget.parent_node_id = parent_node_id
+                if allocated_percentage is not None:
+                    budget.allocated_percentage = self._to_decimal(allocated_percentage)
+                if budget_mode is not None:
+                    budget.budget_mode = self._coerce_budget_mode(budget_mode)
+                if rollover_reserve_usd is not None:
+                    budget.rollover_reserve_usd = self._to_decimal(rollover_reserve_usd)
+                if review_required_at is not _UNSET:
+                    budget.review_required_at = review_required_at
+                session.add(budget)
+            else:
+                if virtual_api_key is not None:
+                    budget.virtual_api_key = virtual_api_key
+                if daily_limit_usd is not None:
+                    budget.daily_limit_usd = self._to_decimal(daily_limit_usd)
+                if current_daily_allowance is not None:
+                    budget.current_daily_allowance = self._to_decimal(current_daily_allowance)
+                if current_spend is not None:
+                    budget.current_spend = self._to_decimal(current_spend)
+                if parent_node_id is not _UNSET:
+                    budget.parent_node_id = parent_node_id
+                if allocated_percentage is not None:
+                    budget.allocated_percentage = self._to_decimal(allocated_percentage)
+                if budget_mode is not None:
+                    budget.budget_mode = self._coerce_budget_mode(budget_mode)
+                if rollover_reserve_usd is not None:
+                    budget.rollover_reserve_usd = self._to_decimal(rollover_reserve_usd)
+                if review_required_at is not _UNSET:
+                    budget.review_required_at = review_required_at
+            session.commit()
+            session.refresh(budget)
+            return budget
+
+    def get_budget(self, *, node_id: str) -> Budget | None:
+        with self._session_factory() as session:
+            return session.query(Budget).filter(Budget.node_id == node_id).first()
+
+    def list_budgets(self, *, node_ids: list[str] | None = None) -> list[Budget]:
+        with self._session_factory() as session:
+            query = session.query(Budget)
+            if node_ids:
+                query = query.filter(Budget.node_id.in_(node_ids))
+            return query.order_by(Budget.created_at.asc()).all()
+
+    def replace_budget_allocations(
+        self,
+        *,
+        manager_node_id: str,
+        allocations: list[tuple[str, float]],
+    ) -> list[BudgetAllocation]:
+        with self._session_factory() as session:
+            session.query(BudgetAllocation).filter(
+                BudgetAllocation.manager_node_id == manager_node_id
+            ).delete()
+            for child_node_id, percentage in allocations:
+                session.add(
+                    BudgetAllocation(
+                        manager_node_id=manager_node_id,
+                        child_node_id=child_node_id,
+                        percentage=percentage,
+                    )
+                )
+            session.commit()
+            return (
+                session.query(BudgetAllocation)
+                .filter(BudgetAllocation.manager_node_id == manager_node_id)
+                .order_by(BudgetAllocation.created_at.asc(), BudgetAllocation.child_node_id.asc())
+                .all()
+            )
+
+    def list_budget_allocations(
+        self,
+        *,
+        manager_node_id: str | None = None,
+        child_node_id: str | None = None,
+    ) -> list[BudgetAllocation]:
+        with self._session_factory() as session:
+            query = session.query(BudgetAllocation)
+            if manager_node_id is not None:
+                query = query.filter(BudgetAllocation.manager_node_id == manager_node_id)
+            if child_node_id is not None:
+                query = query.filter(BudgetAllocation.child_node_id == child_node_id)
+            return query.order_by(
+                BudgetAllocation.manager_node_id.asc(),
+                BudgetAllocation.created_at.asc(),
+                BudgetAllocation.child_node_id.asc(),
+            ).all()
+
+    def get_budget_cycle(self, *, cycle_date: date) -> BudgetCycle | None:
+        with self._session_factory() as session:
+            return (
+                session.query(BudgetCycle)
+                .filter(BudgetCycle.cycle_date == cycle_date)
+                .order_by(BudgetCycle.created_at.asc())
+                .first()
+            )
+
+    def upsert_budget_cycle(
+        self,
+        *,
+        cycle_date: date,
+        company_budget_usd: Decimal | float | int | str,
+        root_allocator_node_id: str | None,
+        executed_at: datetime | None = None,
+    ) -> BudgetCycle:
+        with self._session_factory() as session:
+            cycle = (
+                session.query(BudgetCycle)
+                .filter(BudgetCycle.cycle_date == cycle_date)
+                .order_by(BudgetCycle.created_at.asc())
+                .first()
+            )
+            if cycle is None:
+                cycle = BudgetCycle(
+                    cycle_date=cycle_date,
+                    company_budget_usd=self._to_decimal(company_budget_usd),
+                    root_allocator_node_id=root_allocator_node_id,
+                    executed_at=executed_at or datetime.now(timezone.utc),
+                )
+                session.add(cycle)
+            else:
+                cycle.company_budget_usd = self._to_decimal(company_budget_usd)
+                cycle.root_allocator_node_id = root_allocator_node_id
+                cycle.executed_at = executed_at or datetime.now(timezone.utc)
+            session.commit()
+            session.refresh(cycle)
+            return cycle
+
+    # ---------------------------------------------------------------------
+    # Usage and Session tracking operations
+    # ---------------------------------------------------------------------
+
+    def insert_agent_llm_call(
+        self,
+        *,
+        node_id: str,
+        session_key: str | None = None,
+        model: str | None = None,
+        provider: str | None = None,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        reasoning_tokens: int = 0,
+        total_tokens: int = 0,
+        estimated_cost_usd: Decimal | float | int | str = 0.0,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        duration_ms: int | None = None,
+    ) -> AgentLLMCall:
+        with self._session_factory() as session:
+            call_record = AgentLLMCall(
+                node_id=node_id,
+                session_key=session_key,
+                model=model,
+                provider=provider,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                reasoning_tokens=reasoning_tokens,
+                total_tokens=total_tokens,
+                start_time=start_time,
+                end_time=end_time,
+                duration_ms=duration_ms,
+            )
+            call_record.estimated_cost_usd = self._to_decimal(estimated_cost_usd)
+            
+            session.add(call_record)
+            session.commit()
+            session.refresh(call_record)
+            return call_record
+
+    @staticmethod
+    def _to_decimal(value: Decimal | float | int | str) -> Decimal:
+        if isinstance(value, Decimal):
+            return value
+        return Decimal(str(value))
+
+    @staticmethod
+    def _coerce_budget_mode(raw_mode: BudgetMode | str) -> BudgetMode:
+        if isinstance(raw_mode, BudgetMode):
+            return raw_mode
+        return BudgetMode(str(raw_mode).strip().lower())
+
+    def insert_agent_session_export(
+        self,
+        *,
+        node_id: str,
+        session_key: str,
+        export_path: str,
+        messages_count: int = 0,
+    ) -> AgentSessionExport:
+        with self._session_factory() as session:
+            export_record = AgentSessionExport(
+                node_id=node_id,
+                session_key=session_key,
+                export_path=export_path,
+                messages_count=messages_count,
+            )
+            session.add(export_record)
+            session.commit()
+            session.refresh(export_record)
+            return export_record
+
+    def list_agent_llm_calls(
+        self,
+        *,
+        node_id: str | None = None,
+        session_key: str | None = None,
+        limit: int | None = None,
+    ) -> list[AgentLLMCall]:
+        with self._session_factory() as session:
+            query = session.query(AgentLLMCall)
+            if node_id is not None:
+                query = query.filter(AgentLLMCall.node_id == node_id)
+            if session_key is not None:
+                query = query.filter(AgentLLMCall.session_key == session_key)
+            query = query.order_by(AgentLLMCall.start_time.asc(), AgentLLMCall.created_at.asc())
+            if limit is not None:
+                query = query.limit(limit)
+            return query.all()
+
+    def list_recent_session_summaries(self, *, node_id: str, limit: int = 10) -> list[dict[str, Any]]:
+        with self._session_factory() as session:
+            rows = (
+                session.query(
+                    AgentLLMCall.session_key.label("session_key"),
+                    func.min(AgentLLMCall.start_time).label("started_at"),
+                    func.max(AgentLLMCall.end_time).label("ended_at"),
+                    func.count(AgentLLMCall.id).label("llm_call_count"),
+                    func.coalesce(func.sum(AgentLLMCall.total_tokens), 0).label("total_tokens"),
+                    func.coalesce(func.sum(AgentLLMCall.estimated_cost_usd), 0).label("cost_usd"),
+                    func.max(AgentLLMCall.created_at).label("last_created_at"),
+                )
+                .filter(
+                    AgentLLMCall.node_id == node_id,
+                    AgentLLMCall.session_key.is_not(None),
+                )
+                .group_by(AgentLLMCall.session_key)
+                .order_by(desc("last_created_at"), desc("started_at"))
+                .limit(limit)
+                .all()
+            )
+            return [
+                {
+                    "session_key": row.session_key,
+                    "started_at": row.started_at,
+                    "ended_at": row.ended_at,
+                    "llm_call_count": int(row.llm_call_count or 0),
+                    "total_tokens": int(row.total_tokens or 0),
+                    "cost_usd": float(row.cost_usd or 0.0),
+                }
+                for row in rows
+                if row.session_key is not None
+            ]
+
+    def sum_agent_llm_costs(self, *, node_id: str | None = None, session_key: str | None = None) -> Decimal:
+        with self._session_factory() as session:
+            query = session.query(func.coalesce(func.sum(AgentLLMCall.estimated_cost_usd), 0))
+            if node_id is not None:
+                query = query.filter(AgentLLMCall.node_id == node_id)
+            if session_key is not None:
+                query = query.filter(AgentLLMCall.session_key == session_key)
+            value = query.scalar()
+            return self._to_decimal(value or 0)
 
     # ---------------------------------------------------------------------
     # Form type registry operations

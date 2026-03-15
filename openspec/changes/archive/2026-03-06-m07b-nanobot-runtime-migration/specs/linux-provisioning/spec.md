@@ -23,7 +23,7 @@ Provisioning SHALL create the required workspace tree for a new agent.
 
 #### Scenario: New agent is provisioned
 - **WHEN** the provisioning workflow completes
-- **THEN** required folders/files exist under the agent workspace, including Nanobot-native context assets (`AGENTS.md`, `HEARTBEAT.md`, `SOUL.md`, `USER.md`, `TOOLS.md`, `memory/`, `sessions/`) and OmniClaw operational folders (`inbox`, `outbox/pending`, `outbox/drafts`, `outbox/archive`, `outbox/dead-letter`, `notes`, `drafts`, `skills`)
+- **THEN** required folders/files exist under the agent workspace, including Nanobot-native context assets (`AGENTS.md`, `HEARTBEAT.md`, `SOUL.md`, `USER.md`, `TOOLS.md`, `memory/`, `sessions/`) and OmniClaw operational folders (`inbox`, `outbox/send`, `outbox/drafts`, `outbox/archive`, `outbox/dead-letter`, `notes`, `drafts`, `skills`)
 
 ## REMOVED Requirements
 

@@ -1,0 +1,23 @@
+# Company Authorized Models Configuration
+# This file provides context to agents on the available models and their intended uses.
+
+models:
+  - id: "openrouter/minimax/minimax-m2.5"
+    name: "MiniMax 2.5"
+    description: "Thorough, intelligent model suitable for complex reasoning and standard tasks."
+    cost_tier: "medium"
+    
+  - id: "openrouter/google/gemini-3.1-flash-lite-preview"
+    name: "Gemini 3.1 Flash Lite"
+    description: "Extremely fast, low-cost model. Best for high-volume analysis, formatting, and quick drafts."
+    cost_tier: "low"
+    
+  - id: "openrouter/stepfun/step-3.5-flash:free"
+    name: "Step 3.5 Flash (Free)"
+    description: "Free cost model. Provides capable flash performance with zero budget impact. Use for basic text generation and generic processing when budget is strictly constrained."
+    cost_tier: "free"
+    
+  - id: "openai-codex/gpt-5.4"
+    name: "GPT 5.4 Codex"
+    description: "Deep reasoning model with specialized coding and architecture skills. Reserved for complex engineering and director-level planning. Requires specialized codex auth."
+    cost_tier: "high"

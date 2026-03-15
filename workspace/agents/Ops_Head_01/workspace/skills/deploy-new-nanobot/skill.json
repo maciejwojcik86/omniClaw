@@ -1,0 +1,6 @@
+{
+  "name": "deploy-new-nanobot",
+  "version": "1.0",
+  "description": "End-to-end workflow to deploy a repo-local Nanobot agent with a sibling config.json, OmniClaw workspace scaffold, kernel provisioning payload, and optional packaged runtime source artifact.",
+  "author": "omniclaw"
+}

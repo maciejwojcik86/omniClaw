@@ -40,5 +40,6 @@ class ProvisioningActionRequest(BaseModel):
         default=None,
         validation_alias=AliasChoices("runtime_config_path", "nullclaw_config_path"),
     )
+    role_name: str | None = None
     primary_model: str | None = None
     linux_password: str | None = None

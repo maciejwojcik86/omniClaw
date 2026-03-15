@@ -30,9 +30,9 @@ from tests.helpers import migrate_database_to_head
 
 def _ensure_workspace_dirs(workspace_root: Path) -> None:
     for relative in (
-        "inbox/unread",
+        "inbox/new",
         "inbox/read",
-        "outbox/pending",
+        "outbox/send",
         "outbox/archive",
         "outbox/dead-letter",
         "outbox/drafts",
@@ -120,14 +120,42 @@ def _parse_frontmatter_content(content: str) -> tuple[dict[str, str], str]:
         raise AssertionError("missing frontmatter closing delimiter")
 
     frontmatter: dict[str, str] = {}
+    current_block_key: str | None = None
+    current_block_lines: list[str] = []
+
+    def flush_block() -> None:
+        nonlocal current_block_key, current_block_lines
+        if current_block_key is None:
+            return
+        frontmatter[current_block_key] = "\n".join(current_block_lines).rstrip("\n")
+        current_block_key = None
+        current_block_lines = []
+
     for line in lines[1:closing_index]:
+        if current_block_key is not None:
+            if line.startswith("  "):
+                current_block_lines.append(line[2:])
+                continue
+            if line == "":
+                current_block_lines.append("")
+                continue
+            flush_block()
+
         stripped = line.strip()
         if not stripped:
             continue
         if ":" not in stripped:
             raise AssertionError(f"invalid frontmatter line: '{line}'")
         key, value = stripped.split(":", 1)
-        frontmatter[key.strip()] = value.strip().strip('"').strip("'")
+        normalized_key = key.strip()
+        normalized_value = value.strip().strip('"').strip("'")
+        if normalized_value in {"|", "|-", "|+"}:
+            current_block_key = normalized_key
+            current_block_lines = []
+            continue
+        frontmatter[normalized_key] = normalized_value
+
+    flush_block()
 
     body = "\n".join(lines[closing_index + 1 :])
     return frontmatter, body
@@ -140,6 +168,11 @@ def _load_frontmatter(path: Path) -> tuple[dict[str, str], str]:
 def _render_with_frontmatter(*, frontmatter: dict[str, str], body: str) -> str:
     lines = ["---"]
     for key, value in frontmatter.items():
+        if "\n" in value:
+            lines.append(f"{key}: |")
+            for value_line in value.split("\n"):
+                lines.append(f"  {value_line}")
+            continue
         lines.append(f"{key}: {value}")
     lines.append("---")
     return "\n".join(lines) + "\n\n" + body.rstrip("\n") + "\n"
@@ -177,7 +210,7 @@ def test_ipc_scan_routes_authorized_message_within_target_window(tmp_path: Path)
     )
     repository.link_manager(parent_node_id=manager.id, child_node_id=worker.id)
 
-    queue_file = worker_workspace / "outbox" / "pending" / "status-update.md"
+    queue_file = worker_workspace / "outbox" / "send" / "status-update.md"
     _write_message_file(
         queue_file=queue_file,
         sender="Worker_01",
@@ -200,7 +233,7 @@ def test_ipc_scan_routes_authorized_message_within_target_window(tmp_path: Path)
     assert payload["items"][0]["decision"] == "send"
     assert "transition" not in payload["items"][0]
 
-    delivered = manager_workspace / "inbox" / "unread" / "status-update.md"
+    delivered = manager_workspace / "inbox" / "new" / "status-update.md"
     archived = worker_workspace / "outbox" / "archive" / "status-update.md"
     assert delivered.exists()
     assert archived.exists()
@@ -209,11 +242,16 @@ def test_ipc_scan_routes_authorized_message_within_target_window(tmp_path: Path)
     assert bool(archived.stat().st_mode & stat.S_IWGRP)
     delivered_text = delivered.read_text(encoding="utf-8")
     assert "decision:" in delivered_text
+    assert "agent: Manager_01" in delivered_text
     assert "stage_skill: read-and-acknowledge-internal-message" in delivered_text
     assert "transition:" not in delivered_text
     assert "initiator_node_id:" not in delivered_text
     assert "target_node_id:" not in delivered_text
     assert "in_reply_to:" not in delivered_text
+    delivered_frontmatter, _ = _load_frontmatter(delivered)
+    assert delivered_frontmatter["agent"] == "Manager_01"
+    assert delivered_frontmatter["target"] == ""
+    assert delivered_frontmatter["target_agent"] == ""
 
     session_factory = create_session_factory(database_url)
     with session_factory() as session:
@@ -255,7 +293,7 @@ def test_ipc_scan_claims_pending_form_under_concurrent_scans(tmp_path: Path) -> 
     )
     repository.link_manager(parent_node_id=manager.id, child_node_id=worker.id)
 
-    queue_file = worker_workspace / "outbox" / "pending" / "status-update.md"
+    queue_file = worker_workspace / "outbox" / "send" / "status-update.md"
     _write_message_file(
         queue_file=queue_file,
         sender="Worker_Concurrent_01",
@@ -295,7 +333,7 @@ def test_ipc_scan_claims_pending_form_under_concurrent_scans(tmp_path: Path) -> 
     assert total_routed == 1
     assert total_undelivered == 0
 
-    delivered = manager_workspace / "inbox" / "unread" / "status-update.md"
+    delivered = manager_workspace / "inbox" / "new" / "status-update.md"
     archived = worker_workspace / "outbox" / "archive" / "status-update.md"
     assert delivered.exists()
     assert archived.exists()
@@ -354,7 +392,7 @@ def test_ipc_scan_routes_message_without_management_link(tmp_path: Path) -> None
         workspace_root=str(target_workspace.resolve()),
     )
 
-    queue_file = sender_workspace / "outbox" / "pending" / "request.md"
+    queue_file = sender_workspace / "outbox" / "send" / "request.md"
     _write_message_file(
         queue_file=queue_file,
         sender="Sender_01",
@@ -372,7 +410,7 @@ def test_ipc_scan_routes_message_without_management_link(tmp_path: Path) -> None
     assert payload["summary"]["undelivered"] == 0
 
     archived = sender_workspace / "outbox" / "archive" / "request.md"
-    delivered = target_workspace / "inbox" / "unread" / "request.md"
+    delivered = target_workspace / "inbox" / "new" / "request.md"
     assert archived.exists()
     assert delivered.exists()
 
@@ -415,7 +453,7 @@ def test_ipc_scan_accepts_legacy_frontmatter_transition_field(tmp_path: Path) ->
         workspace_root=str(target_workspace.resolve()),
     )
 
-    queue_file = sender_workspace / "outbox" / "pending" / "legacy-frontmatter.md"
+    queue_file = sender_workspace / "outbox" / "send" / "legacy-frontmatter.md"
     _write_message_file(
         queue_file=queue_file,
         sender="Sender_Legacy",
@@ -434,7 +472,7 @@ def test_ipc_scan_accepts_legacy_frontmatter_transition_field(tmp_path: Path) ->
     assert payload["items"][0]["decision"] == "send"
     assert "transition" not in payload["items"][0]
 
-    delivered = target_workspace / "inbox" / "unread" / "legacy-frontmatter.md"
+    delivered = target_workspace / "inbox" / "new" / "legacy-frontmatter.md"
     assert delivered.exists()
     delivered_text = delivered.read_text(encoding="utf-8")
     assert "decision:" in delivered_text
@@ -543,7 +581,7 @@ def test_ipc_scan_uses_active_custom_form_type_definition(tmp_path: Path, monkey
     assert definitions[0].version == "2.0.0"
     assert definitions[0].lifecycle_state.value == "ACTIVE"
 
-    queue_file = sender_workspace / "outbox" / "pending" / "custom-message.md"
+    queue_file = sender_workspace / "outbox" / "send" / "custom-message.md"
     _write_generic_form_file(
         queue_file=queue_file,
         form_type="custom_message_form",
@@ -569,11 +607,14 @@ def test_ipc_scan_uses_active_custom_form_type_definition(tmp_path: Path, monkey
         assert form.current_status == "INBOX_UNREAD"
         assert form.current_holder_node == target.id
 
-    delivered = target_workspace / "inbox" / "unread" / "custom-message.md"
+    delivered = target_workspace / "inbox" / "new" / "custom-message.md"
     read_copy = target_workspace / "inbox" / "read" / "custom-message.md"
     assert delivered.exists()
     delivered_frontmatter, _ = _load_frontmatter(delivered)
+    assert delivered_frontmatter["agent"] == "Target_Custom"
     assert delivered_frontmatter["stage_skill"] == "read_and_acknowledge_internal_message"
+    assert delivered_frontmatter["target"] == ""
+    assert delivered_frontmatter["target_agent"] == ""
     delivered.rename(read_copy)
 
     ack_response = client.post(
@@ -584,7 +625,7 @@ def test_ipc_scan_uses_active_custom_form_type_definition(tmp_path: Path, monkey
             "actor_node_id": target.id,
             "decision_key": "mark_read",
             "payload": {
-                "unread_path": str(delivered),
+                "new_path": str(delivered),
                 "read_path": str(read_copy),
             },
         },
@@ -762,13 +803,13 @@ def test_ipc_scan_routes_deploy_new_agent_full_stage_cycle(tmp_path: Path, monke
         frontmatter, body = _load_frontmatter(from_file)
         frontmatter["decision"] = decision
         frontmatter["stage_skill"] = stale_stage_skill
-        pending_path = holder_workspace / "outbox" / "pending" / from_file.name
+        pending_path = holder_workspace / "outbox" / "send" / from_file.name
         pending_path.write_text(
             _render_with_frontmatter(frontmatter=frontmatter, body=body),
             encoding="utf-8",
         )
 
-    request_file = macos_workspace / "outbox" / "pending" / "deploy-cycle.md"
+    request_file = macos_workspace / "outbox" / "send" / "deploy-cycle.md"
     _write_generic_form_file(
         queue_file=request_file,
         form_type="deploy_new_agent",
@@ -785,11 +826,14 @@ def test_ipc_scan_routes_deploy_new_agent_full_stage_cycle(tmp_path: Path, monke
     item_one = scan_one.json()["items"][0]
     assert item_one["status"] == "routed"
     assert item_one["next_stage"] == "HR_REVIEW"
-    hr_delivery = hr_workspace / "inbox" / "unread" / "deploy-cycle.md"
+    hr_delivery = hr_workspace / "inbox" / "new" / "deploy-cycle.md"
     assert hr_delivery.exists()
     hr_frontmatter, _ = _load_frontmatter(hr_delivery)
+    assert hr_frontmatter["agent"] == "HR_Head_01"
     assert hr_frontmatter["stage"] == "HR_REVIEW"
     assert hr_frontmatter["stage_skill"] == "review-agent-role-and-template"
+    assert hr_frontmatter["target"] == ""
+    assert "approve_to_finance: Macos_Supervisor" in hr_frontmatter["target_agent"]
     assert_skill_manifest(
         hr_workspace,
         "review-agent-role-and-template",
@@ -806,11 +850,14 @@ def test_ipc_scan_routes_deploy_new_agent_full_stage_cycle(tmp_path: Path, monke
     )
     scan_two = client.post("/v1/ipc/actions", json={"action": "scan_forms"})
     assert scan_two.status_code == 200
-    macos_delivery = macos_workspace / "inbox" / "unread" / "deploy-cycle.md"
+    macos_delivery = macos_workspace / "inbox" / "new" / "deploy-cycle.md"
     assert macos_delivery.exists()
     macos_frontmatter, _ = _load_frontmatter(macos_delivery)
+    assert macos_frontmatter["agent"] == "Macos_Supervisor"
     assert macos_frontmatter["stage"] == "FINANCE_REVIEW"
     assert macos_frontmatter["stage_skill"] == "allocate-agent-budget"
+    assert macos_frontmatter["target"] == ""
+    assert "approve_to_director: Director_01" in macos_frontmatter["target_agent"]
     assert_skill_manifest(
         macos_workspace,
         "allocate-agent-budget",
@@ -826,11 +873,14 @@ def test_ipc_scan_routes_deploy_new_agent_full_stage_cycle(tmp_path: Path, monke
     )
     scan_three = client.post("/v1/ipc/actions", json={"action": "scan_forms"})
     assert scan_three.status_code == 200
-    director_delivery = director_workspace / "inbox" / "unread" / "deploy-cycle.md"
+    director_delivery = director_workspace / "inbox" / "new" / "deploy-cycle.md"
     assert director_delivery.exists()
     director_frontmatter, _ = _load_frontmatter(director_delivery)
+    assert director_frontmatter["agent"] == "Director_01"
     assert director_frontmatter["stage"] == "DIRECTOR_APPROVAL"
     assert director_frontmatter["stage_skill"] == "final-agent-signoff"
+    assert director_frontmatter["target"] == ""
+    assert "execute_deployment: Ops_Head_01" in director_frontmatter["target_agent"]
     assert_skill_manifest(
         director_workspace,
         "final-agent-signoff",
@@ -846,11 +896,14 @@ def test_ipc_scan_routes_deploy_new_agent_full_stage_cycle(tmp_path: Path, monke
     )
     scan_four = client.post("/v1/ipc/actions", json={"action": "scan_forms"})
     assert scan_four.status_code == 200
-    ops_delivery = ops_workspace / "inbox" / "unread" / "deploy-cycle.md"
+    ops_delivery = ops_workspace / "inbox" / "new" / "deploy-cycle.md"
     assert ops_delivery.exists()
     ops_frontmatter, _ = _load_frontmatter(ops_delivery)
+    assert ops_frontmatter["agent"] == "Ops_Head_01"
     assert ops_frontmatter["stage"] == "AGENT_DEPLOYMENT"
     assert ops_frontmatter["stage_skill"] == "deploy-new-nanobot"
+    assert ops_frontmatter["target"] == ""
+    assert ops_frontmatter["target_agent"] == ""
     assert_skill_manifest(
         ops_workspace,
         "deploy-new-nanobot",
@@ -894,9 +947,12 @@ def test_ipc_scan_routes_deploy_new_agent_full_stage_cycle(tmp_path: Path, monke
     assert archived_item["next_stage"] == "ARCHIVED"
     archive_frontmatter, _ = _load_frontmatter(Path(archived_item["archive_path"]))
     assert archive_frontmatter["form_id"] == form_id
+    assert archive_frontmatter["agent"] == ""
     assert archive_frontmatter["stage"] == "ARCHIVED"
     assert archive_frontmatter["decision"] == ""
     assert archive_frontmatter["stage_skill"] == ""
+    assert archive_frontmatter["target"] == ""
+    assert archive_frontmatter["target_agent"] == ""
 
     session_factory = create_session_factory(database_url)
     with session_factory() as session:
@@ -952,7 +1008,7 @@ def test_ipc_scan_marks_undelivered_malformed_frontmatter(tmp_path: Path) -> Non
     )
     repository.link_manager(parent_node_id=manager.id, child_node_id=worker.id)
 
-    queue_file = worker_workspace / "outbox" / "pending" / "bad-message.md"
+    queue_file = worker_workspace / "outbox" / "send" / "bad-message.md"
     _write_message_file(
         queue_file=queue_file,
         sender="Worker_01",
@@ -970,10 +1026,10 @@ def test_ipc_scan_marks_undelivered_malformed_frontmatter(tmp_path: Path) -> Non
     assert payload["summary"]["undelivered"] == 1
     item = payload["items"][0]
 
-    pending = worker_workspace / "outbox" / "pending" / "bad-message.md"
+    pending = worker_workspace / "outbox" / "send" / "bad-message.md"
     dead_letter = worker_workspace / "outbox" / "dead-letter" / "bad-message.md"
-    feedback_sender_inbox = worker_workspace / "inbox" / "unread"
-    delivered = manager_workspace / "inbox" / "unread" / "bad-message.md"
+    feedback_sender_inbox = worker_workspace / "inbox" / "new"
+    delivered = manager_workspace / "inbox" / "new" / "bad-message.md"
     assert pending.exists() is False
     assert dead_letter.exists()
     assert delivered.exists() is False
@@ -1020,7 +1076,7 @@ def test_ipc_scan_marks_undelivered_when_decision_missing(tmp_path: Path) -> Non
         workspace_root=str(target_workspace.resolve()),
     )
 
-    queue_file = sender_workspace / "outbox" / "pending" / "missing-decision.md"
+    queue_file = sender_workspace / "outbox" / "send" / "missing-decision.md"
     _write_message_file(
         queue_file=queue_file,
         sender="Sender_Decision_Missing",
@@ -1040,7 +1096,7 @@ def test_ipc_scan_marks_undelivered_when_decision_missing(tmp_path: Path) -> Non
     assert "decision is required" in item["failure_reason"]
     assert queue_file.exists() is False
     dead_letter = sender_workspace / "outbox" / "dead-letter" / "missing-decision.md"
-    target_feedback = target_workspace / "inbox" / "unread"
+    target_feedback = target_workspace / "inbox" / "new"
     assert dead_letter.exists()
     assert item["dead_letter_path"] == str(dead_letter.resolve())
     assert item["feedback_path"] is not None
@@ -1080,7 +1136,7 @@ def test_ipc_scan_ignores_frontmatter_sender_mismatch(tmp_path: Path) -> None:
     )
     repository.link_manager(parent_node_id=manager.id, child_node_id=worker.id)
 
-    queue_file = worker_workspace / "outbox" / "pending" / "wrong-sender.md"
+    queue_file = worker_workspace / "outbox" / "send" / "wrong-sender.md"
     _write_message_file(
         queue_file=queue_file,
         sender="Other_Node",
@@ -1096,8 +1152,8 @@ def test_ipc_scan_ignores_frontmatter_sender_mismatch(tmp_path: Path) -> None:
     assert payload["summary"]["routed"] == 1
     assert payload["summary"]["undelivered"] == 0
 
-    pending = worker_workspace / "outbox" / "pending" / "wrong-sender.md"
-    delivered = manager_workspace / "inbox" / "unread" / "wrong-sender.md"
+    pending = worker_workspace / "outbox" / "send" / "wrong-sender.md"
+    delivered = manager_workspace / "inbox" / "new" / "wrong-sender.md"
     archived = worker_workspace / "outbox" / "archive" / "wrong-sender.md"
     assert pending.exists() is False
     assert delivered.exists()
@@ -1142,7 +1198,7 @@ def test_ipc_scan_ignores_frontmatter_name_mismatch(tmp_path: Path) -> None:
     )
     repository.link_manager(parent_node_id=manager.id, child_node_id=worker.id)
 
-    queue_file = worker_workspace / "outbox" / "pending" / "name-mismatch.md"
+    queue_file = worker_workspace / "outbox" / "send" / "name-mismatch.md"
     _write_message_file(
         queue_file=queue_file,
         sender="Worker_01",
@@ -1160,7 +1216,7 @@ def test_ipc_scan_ignores_frontmatter_name_mismatch(tmp_path: Path) -> None:
     assert payload["summary"]["routed"] == 1
     assert payload["summary"]["undelivered"] == 0
 
-    delivered = manager_workspace / "inbox" / "unread" / "name-mismatch.md"
+    delivered = manager_workspace / "inbox" / "new" / "name-mismatch.md"
     archived = worker_workspace / "outbox" / "archive" / "name-mismatch.md"
     assert delivered.exists()
     assert archived.exists()
@@ -1205,7 +1261,7 @@ def test_ipc_acknowledge_message_read_archives_form(tmp_path: Path) -> None:
     )
     repository.link_manager(parent_node_id=holder.id, child_node_id=sender.id)
 
-    queue_file = sender_workspace / "outbox" / "pending" / "read-me.md"
+    queue_file = sender_workspace / "outbox" / "send" / "read-me.md"
     _write_message_file(
         queue_file=queue_file,
         sender="Sender_01",
@@ -1218,7 +1274,7 @@ def test_ipc_acknowledge_message_read_archives_form(tmp_path: Path) -> None:
     assert scan_response.status_code == 200
     form_id = scan_response.json()["items"][0]["form_id"]
 
-    delivered = holder_workspace / "inbox" / "unread" / "read-me.md"
+    delivered = holder_workspace / "inbox" / "new" / "read-me.md"
     read_copy = holder_workspace / "inbox" / "read" / "read-me.md"
     assert delivered.exists()
     delivered.rename(read_copy)
@@ -1230,7 +1286,7 @@ def test_ipc_acknowledge_message_read_archives_form(tmp_path: Path) -> None:
             "form_id": form_id,
             "actor_node_name": "Holder_01",
             "payload": {
-                "unread_path": str(delivered),
+                "new_path": str(delivered),
                 "read_path": str(read_copy),
             },
         },
@@ -1331,7 +1387,7 @@ def test_ipc_scan_supports_terminal_null_stage_without_required_skill(tmp_path: 
     )
     assert activate_response.status_code == 200
 
-    queue_file = sender_workspace / "outbox" / "pending" / "terminal-close.md"
+    queue_file = sender_workspace / "outbox" / "send" / "terminal-close.md"
     _write_generic_form_file(
         queue_file=queue_file,
         form_type="custom_message_form",
@@ -1352,7 +1408,10 @@ def test_ipc_scan_supports_terminal_null_stage_without_required_skill(tmp_path: 
     assert item["backup_path"] is not None
     assert queue_file.exists() is False
     archive_frontmatter, _ = _load_frontmatter(Path(item["archive_path"]))
+    assert archive_frontmatter["agent"] == ""
     assert archive_frontmatter["stage_skill"] == ""
+    assert archive_frontmatter["target"] == ""
+    assert archive_frontmatter["target_agent"] == ""
 
     session_factory = create_session_factory(database_url)
     with session_factory() as session:
@@ -1395,7 +1454,7 @@ def test_ipc_scan_stops_processing_after_limit(tmp_path: Path) -> None:
     )
 
     for index in range(15):
-        queue_file = sender_workspace / "outbox" / "pending" / f"limit-{index}.md"
+        queue_file = sender_workspace / "outbox" / "send" / f"limit-{index}.md"
         _write_message_file(
             queue_file=queue_file,
             sender="Sender_Limit",
@@ -1410,7 +1469,7 @@ def test_ipc_scan_stops_processing_after_limit(tmp_path: Path) -> None:
     assert payload["summary"]["scanned"] == 10
     assert payload["summary"]["routed"] == 10
     assert payload["summary"]["undelivered"] == 0
-    remaining = sorted((sender_workspace / "outbox" / "pending").glob("*.md"))
+    remaining = sorted((sender_workspace / "outbox" / "send").glob("*.md"))
     assert len(remaining) == 5
 
 
@@ -1470,7 +1529,7 @@ def test_ipc_requeue_dead_letter_script_moves_file_to_pending(tmp_path: Path) ->
         text=True,
     )
     assert result.returncode == 0, result.stderr
-    pending_file = workspace_root / "outbox" / "pending" / "needs-fix.md"
+    pending_file = workspace_root / "outbox" / "send" / "needs-fix.md"
     assert pending_file.exists()
     assert dead_letter_file.exists() is False
 
@@ -1553,7 +1612,7 @@ def test_ipc_blocks_non_allowlisted_initiator_for_new_form(tmp_path: Path, monke
     assert sync_response.status_code == 200
     assert sync_response.json()["summary"]["failed"] == 0
 
-    request_file = hr_workspace / "outbox" / "pending" / "restricted-initiation.md"
+    request_file = hr_workspace / "outbox" / "send" / "restricted-initiation.md"
     _write_generic_form_file(
         queue_file=request_file,
         form_type="restricted_form",

@@ -22,11 +22,11 @@ Feedback routing MUST use resolved target inbox when possible and sender inbox w
 
 #### Scenario: Target resolves
 - **WHEN** undelivered form has resolvable target node workspace
-- **THEN** feedback artifact is delivered to target `inbox/unread`
+- **THEN** feedback artifact is delivered to target `inbox/new`
 
 #### Scenario: Target unresolved
 - **WHEN** undelivered form target cannot be resolved
-- **THEN** feedback artifact is delivered to sender `inbox/unread`
+- **THEN** feedback artifact is delivered to sender `inbox/new`
 
 ### Requirement: Requeue SHALL Be Explicit Operator Action
 The project MUST provide helper tooling to move dead-letter files back to pending queue intentionally.
@@ -34,4 +34,3 @@ The project MUST provide helper tooling to move dead-letter files back to pendin
 #### Scenario: Operator requeues dead-letter file
 - **WHEN** requeue helper is run for selected dead-letter file
 - **THEN** file is moved to sender pending queue with collision-safe naming and becomes eligible for next scan
-

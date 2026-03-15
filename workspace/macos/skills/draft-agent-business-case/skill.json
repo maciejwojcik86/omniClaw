@@ -1,0 +1,6 @@
+{
+  "name": "draft-agent-business-case",
+  "version": "1.0.0",
+  "description": "Draft the complete BUSINESS_CASE request for a new agent deployment and submit it for HR review.",
+  "author": "omniclaw-kernel"
+}

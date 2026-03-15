@@ -64,11 +64,11 @@ subject: <Short Subject>
    - `subject` is clear and short
    - body is complete and actionable
 3. Submit by moving file to send queue:
-   - move from `outbox/drafts/` to `outbox/pending/`
+   - move from `outbox/drafts/` to `outbox/send/`
 4. Wait for kernel router cycle.
 5. Kernel will send a message and leave a copy depending on the outcome:
    - success: your file moved to `outbox/archive/`
-   - undelivered: your file remains in `outbox/pending/` and scan response includes failure reason
+   - undelivered: your file remains in `outbox/send/` and scan response includes failure reason
 
 ## Verification Commands
 
@@ -79,7 +79,7 @@ subject: <Short Subject>
 
 ## Fallback Path
 
-If message stays undelivered in `outbox/pending`:
+If message stays undelivered in `outbox/send`:
 1. Review scan response `failure_reason` and fix frontmatter fields.
 2. Confirm `target` node name is valid and target workspace exists.
-3. Keep message in `outbox/pending/` for next routing cycle.
+3. Keep message in `outbox/send/` for next routing cycle.

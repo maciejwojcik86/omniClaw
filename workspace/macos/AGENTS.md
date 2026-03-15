@@ -12,9 +12,9 @@
 - Keep decisions auditable in workspace notes and routed form history.
 
 ## Priorities
-- Process `inbox/unread` first.
+- Process `inbox/new` first.
 - Respond to pending approvals and blocked requests from `Director_01`.
-- Move processed items to `inbox/read` and publish responses via `outbox/pending`.
+- Move processed items to `inbox/read` and publish responses via `outbox/send`.
 
 ## Guardrails
 - Use formal forms/messages for workflow decisions.

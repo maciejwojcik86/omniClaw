@@ -43,6 +43,11 @@ def create_session_factory(database_url: str, engine: Engine | None = None) -> s
     return sessionmaker(bind=resolved_engine, autocommit=False, autoflush=False, future=True)
 
 
+def get_session_factory(database_url: str) -> tuple[Engine, sessionmaker[Session]]:
+    engine = create_engine_from_url(database_url)
+    return engine, create_session_factory(database_url, engine=engine)
+
+
 def require_database_at_head(database_url: str, engine: Engine | None = None) -> None:
     repo_root = Path(__file__).resolve().parents[3]
     alembic_ini = repo_root / "alembic.ini"

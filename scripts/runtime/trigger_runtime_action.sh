@@ -7,9 +7,10 @@ Usage:
   trigger_runtime_action.sh [--apply] [--kernel-url <url>] [--endpoint <path>] --action <action>
                             [--node-id <id>] [--node-name <name>]
                             [--gateway-host <host>] [--gateway-port <port>] [--force-restart <true|false>]
+                            [--prompt <text>] [--session-key <key>] [--markdown <true|false>] [--include-logs <true|false>]
 
 Default mode is dry-run. Use --apply to execute HTTP POST.
-Actions: gateway_start, gateway_stop, gateway_status, list_agents
+Actions: gateway_start, gateway_stop, gateway_status, list_agents, invoke_prompt
 USAGE
 }
 
@@ -22,6 +23,10 @@ node_name=""
 gateway_host="127.0.0.1"
 gateway_port="18790"
 force_restart="false"
+prompt=""
+session_key="cli:verification"
+markdown="false"
+include_logs="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -61,6 +66,22 @@ while [[ $# -gt 0 ]]; do
       force_restart="$2"
       shift 2
       ;;
+    --prompt)
+      prompt="$2"
+      shift 2
+      ;;
+    --session-key)
+      session_key="$2"
+      shift 2
+      ;;
+    --markdown)
+      markdown="$2"
+      shift 2
+      ;;
+    --include-logs)
+      include_logs="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -80,7 +101,7 @@ if [[ -z "$action" ]]; then
 fi
 
 case "$action" in
-  gateway_start|gateway_stop|gateway_status|list_agents)
+  gateway_start|gateway_stop|gateway_status|list_agents|invoke_prompt)
     ;;
   *)
     echo "Invalid --action '$action'" >&2
@@ -108,6 +129,29 @@ case "$force_restart" in
     ;;
 esac
 
+case "$markdown" in
+  true|false)
+    ;;
+  *)
+    echo "--markdown must be true or false" >&2
+    exit 1
+    ;;
+esac
+
+case "$include_logs" in
+  true|false)
+    ;;
+  *)
+    echo "--include-logs must be true or false" >&2
+    exit 1
+    ;;
+esac
+
+if [[ "$action" == "invoke_prompt" && -z "$prompt" ]]; then
+  echo "--prompt is required for action 'invoke_prompt'" >&2
+  exit 1
+fi
+
 node_id_json="null"
 node_name_json="null"
 if [[ -n "$node_id" ]]; then
@@ -127,7 +171,11 @@ cat > "$payload_file" <<JSON
   "node_name": $node_name_json,
   "gateway_host": "$gateway_host",
   "gateway_port": $gateway_port,
-  "force_restart": $force_restart
+  "force_restart": $force_restart,
+  "prompt": $(python3 -c 'import json,sys; print(json.dumps(sys.argv[1] if sys.argv[1] else None))' "$prompt"),
+  "session_key": $(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$session_key"),
+  "markdown": $markdown,
+  "include_logs": $include_logs
 }
 JSON
 

@@ -10,7 +10,7 @@ Usage:
                               [--decision-key <decision>]
 
 Default mode is dry-run. With --apply, the script:
-1) moves inbox/unread/<form-file> -> inbox/read/<form-file>
+1) moves inbox/new/<form-file> -> inbox/read/<form-file>
 2) calls forms endpoint action transition_form
 USAGE
 }
@@ -76,7 +76,7 @@ if [[ -z "$workspace_root" || -z "$form_file" || -z "$form_id" || -z "$actor_nod
   exit 1
 fi
 
-unread_path="${workspace_root%/}/inbox/unread/${form_file}"
+new_path="${workspace_root%/}/inbox/new/${form_file}"
 read_dir="${workspace_root%/}/inbox/read"
 read_path="${read_dir}/${form_file}"
 
@@ -90,7 +90,7 @@ cat > "$payload_file" <<JSON
   "actor_node_id": "$actor_node_id",
   "decision_key": "$decision_key",
   "payload": {
-    "unread_path": "$unread_path",
+    "new_path": "$new_path",
     "read_path": "$read_path"
   }
 }
@@ -99,19 +99,19 @@ JSON
 url="${kernel_url%/}${endpoint}"
 
 if [[ "$dry_run" -eq 1 ]]; then
-  echo "DRY-RUN move: $unread_path -> $read_path"
+  echo "DRY-RUN move: $new_path -> $read_path"
   echo "DRY-RUN forms request: POST $url"
   cat "$payload_file"
   exit 0
 fi
 
-if [[ ! -f "$unread_path" ]]; then
-  echo "unread form file not found: $unread_path" >&2
+if [[ ! -f "$new_path" ]]; then
+  echo "new form file not found: $new_path" >&2
   exit 1
 fi
 
 mkdir -p "$read_dir"
-mv "$unread_path" "$read_path"
+mv "$new_path" "$read_path"
 
 curl --fail --show-error --silent \
   -X POST \

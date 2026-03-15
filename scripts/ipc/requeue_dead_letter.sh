@@ -47,7 +47,7 @@ fi
 
 workspace_root="$(realpath "$workspace_root")"
 dead_letter_dir="$workspace_root/outbox/dead-letter"
-pending_dir="$workspace_root/outbox/pending"
+pending_dir="$workspace_root/outbox/send"
 
 if [[ ! -d "$dead_letter_dir" ]]; then
   echo "dead-letter directory not found: $dead_letter_dir" >&2

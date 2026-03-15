@@ -238,6 +238,9 @@ agents_cmd=(
   --manager-name "$manager_name"
   --role-name "$role_name"
 )
+if [[ -n "$primary_model" ]]; then
+  agents_cmd+=(--primary-model "$primary_model")
+fi
 if [[ -n "$agents_source_file" ]]; then
   agents_cmd+=(--source-file "$agents_source_file")
 fi

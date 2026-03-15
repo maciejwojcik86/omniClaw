@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 import json
+import os
 from pathlib import Path
 import shlex
 import subprocess
@@ -42,6 +44,8 @@ class RuntimeService:
             return self._gateway_stop(node=node, request=request)
         if request.action == "gateway_status":
             return self._gateway_status(node=node, request=request)
+        if request.action == "invoke_prompt":
+            return self._invoke_prompt(node=node, request=request)
 
         raise HTTPException(status_code=400, detail=f"Unsupported runtime action '{request.action}'")
 
@@ -345,6 +349,90 @@ class RuntimeService:
             },
         }
 
+    def _invoke_prompt(self, *, node: Node, request: RuntimeActionRequest) -> dict[str, object]:
+        if not request.prompt:
+            raise HTTPException(status_code=422, detail="prompt is required for invoke_prompt")
+        workspace_root = self._resolve_workspace_root(node)
+        config_path = self._resolve_runtime_config_path(node)
+        artifact_paths = self._resolve_artifact_paths(workspace_root)
+        command_args = self._build_agent_command_args(
+            prompt=request.prompt,
+            session_key=request.session_key,
+            workspace_root=workspace_root,
+            config_path=config_path,
+            markdown=request.markdown,
+            include_logs=request.include_logs,
+        )
+        command = shlex.join(command_args)
+        started_at = datetime.now(timezone.utc)
+
+        if self._mode == "mock":
+            stdout = f"mock reply from {node.name}: {request.prompt[:160]}"
+            finished_at = datetime.now(timezone.utc)
+            usage_record = self._record_mock_usage(node=node, request=request, started_at=started_at, finished_at=finished_at)
+            metadata_path = self._write_run_metadata(
+                workspace_root=workspace_root,
+                action="invoke_prompt",
+                started_at=started_at,
+                finished_at=finished_at,
+                command=command,
+                exit_code=0,
+                stdout=stdout,
+                stderr="",
+                artifact_paths=artifact_paths,
+            )
+            refreshed_node = self._repository.get_agent_node(node_id=node.id)
+            return {
+                "action": "invoke_prompt",
+                "node": self._serialize_node(refreshed_node or node),
+                "invocation": {
+                    "status": "completed",
+                    "session_key": request.session_key,
+                    "prompt": request.prompt,
+                    "reply": stdout,
+                    "exit_code": 0,
+                    "command": command,
+                    "artifact_paths": {**artifact_paths, "run_metadata": str(metadata_path)},
+                    "mock_usage": usage_record,
+                },
+            }
+
+        script = self._build_agent_invoke_script(command=command, artifact_paths=artifact_paths)
+        process = self._run_runtime_script(script=script)
+        finished_at = datetime.now(timezone.utc)
+        metadata_path = self._write_run_metadata(
+            workspace_root=workspace_root,
+            action="invoke_prompt",
+            started_at=started_at,
+            finished_at=finished_at,
+            command=command,
+            exit_code=process.returncode,
+            stdout=process.stdout,
+            stderr=process.stderr,
+            artifact_paths=artifact_paths,
+        )
+        if process.returncode != 0:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Prompt invocation failed: "
+                    f"exit_code={process.returncode}, stderr={self._trim_output(process.stderr)}"
+                ),
+            )
+        return {
+            "action": "invoke_prompt",
+            "node": self._serialize_node(node),
+            "invocation": {
+                "status": "completed",
+                "session_key": request.session_key,
+                "prompt": request.prompt,
+                "reply": self._trim_output(process.stdout),
+                "exit_code": process.returncode,
+                "command": command,
+                "artifact_paths": {**artifact_paths, "run_metadata": str(metadata_path)},
+            },
+        }
+
     def _resolve_agent_node(self, request: RuntimeActionRequest) -> Node:
         if not request.node_id and not request.node_name:
             raise HTTPException(status_code=422, detail="node_id or node_name is required")
@@ -416,6 +504,31 @@ class RuntimeService:
             raise HTTPException(status_code=500, detail="runtime gateway command resolved to empty argv")
         return args
 
+    def _build_agent_command_args(
+        self,
+        *,
+        prompt: str,
+        session_key: str,
+        workspace_root: Path,
+        config_path: Path,
+        markdown: bool,
+        include_logs: bool,
+    ) -> list[str]:
+        return [
+            "nanobot",
+            "agent",
+            "--message",
+            prompt,
+            "--session",
+            session_key,
+            "--workspace",
+            str(workspace_root),
+            "--config",
+            str(config_path),
+            "--markdown" if markdown else "--no-markdown",
+            "--logs" if include_logs else "--no-logs",
+        ]
+
     def _build_start_script(
         self,
         *,
@@ -446,6 +559,15 @@ class RuntimeService:
             "pid=$!\n"
             "echo \"$pid\" > \"$pid_file\"\n"
             "echo \"started:$pid\"\n"
+        )
+
+    def _build_agent_invoke_script(self, *, command: str, artifact_paths: dict[str, str]) -> str:
+        output_root_q = shlex.quote(artifact_paths["output_root"])
+        return (
+            "set -euo pipefail\n"
+            f"output_root={output_root_q}\n"
+            "mkdir -p \"$output_root\"\n"
+            f"{command}\n"
         )
 
     def _build_stop_script(self, *, artifact_paths: dict[str, str]) -> str:
@@ -503,12 +625,28 @@ class RuntimeService:
                 text=True,
                 check=False,
                 timeout=self._settings.runtime_command_timeout_seconds,
+                env=self._build_runtime_env(),
             )
         except subprocess.TimeoutExpired as exc:
             raise HTTPException(
                 status_code=504,
                 detail=f"runtime command timed out after {self._settings.runtime_command_timeout_seconds}s",
             ) from exc
+
+    def _build_runtime_env(self) -> dict[str, str]:
+        env = os.environ.copy()
+        runtime_paths = [
+            str(Path(__file__).resolve().parents[2]),
+            "/home/macos/nanobot",
+        ]
+        existing = env.get("PYTHONPATH", "")
+        existing_parts = [part for part in existing.split(":") if part]
+        merged_parts: list[str] = []
+        for part in [*runtime_paths, *existing_parts]:
+            if part not in merged_parts:
+                merged_parts.append(part)
+        env["PYTHONPATH"] = ":".join(merged_parts)
+        return env
 
     def _write_run_metadata(
         self,
@@ -548,11 +686,59 @@ class RuntimeService:
         metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
         return metadata_path
 
+    def _record_mock_usage(
+        self,
+        *,
+        node: Node,
+        request: RuntimeActionRequest,
+        started_at: datetime,
+        finished_at: datetime,
+    ) -> dict[str, object]:
+        prompt_tokens = max(1, len(request.prompt.split()))
+        completion_tokens = max(1, len((request.prompt[:160] or "ok").split()))
+        reasoning_tokens = 0
+        total_tokens = prompt_tokens + completion_tokens + reasoning_tokens
+        duration_ms = max(1, int((finished_at - started_at).total_seconds() * 1000))
+        estimated_cost_usd = (Decimal(total_tokens) * Decimal("0.01")).quantize(Decimal("0.000001"))
+        call = self._repository.insert_agent_llm_call(
+            node_id=node.id,
+            session_key=request.session_key,
+            model=node.primary_model or "mock-model",
+            provider="mock-runtime",
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            reasoning_tokens=reasoning_tokens,
+            total_tokens=total_tokens,
+            estimated_cost_usd=estimated_cost_usd,
+            start_time=started_at,
+            end_time=max(finished_at, started_at + timedelta(milliseconds=1)),
+            duration_ms=duration_ms,
+        )
+        budget = self._repository.get_budget(node_id=node.id)
+        if budget is not None:
+            updated_spend = Decimal(budget.current_spend) + estimated_cost_usd
+            self._repository.upsert_budget(node_id=node.id, current_spend=updated_spend)
+        return {
+            "call_id": call.id,
+            "provider": "mock-runtime",
+            "model": node.primary_model or "mock-model",
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "reasoning_tokens": reasoning_tokens,
+            "total_tokens": total_tokens,
+            "estimated_cost_usd": float(estimated_cost_usd),
+            "duration_ms": duration_ms,
+        }
+
     def _serialize_node(self, node: Node) -> dict[str, object]:
+        manager = self._repository.get_manager_node(child_node_id=node.id)
+        budget = self._repository.get_budget(node_id=node.id)
         return {
             "id": node.id,
             "name": node.name,
+            "type": str(node.type.value).lower(),
             "status": node.status.value,
+            "role_name": node.role_name,
             "linux_username": node.linux_username,
             "workspace_root": node.workspace_root,
             "runtime_config_path": node.runtime_config_path,
@@ -564,6 +750,13 @@ class RuntimeService:
             "gateway_port": node.gateway_port,
             "gateway_started_at": node.gateway_started_at.isoformat() if node.gateway_started_at else None,
             "gateway_stopped_at": node.gateway_stopped_at.isoformat() if node.gateway_stopped_at else None,
+            "manager_node_id": manager.id if manager else None,
+            "manager_name": manager.name if manager else None,
+            "budget_mode": budget.budget_mode.value if budget else None,
+            "current_spend_usd": float(budget.current_spend) if budget else None,
+            "effective_daily_limit_usd": float(budget.daily_limit_usd) if budget else None,
+            "remaining_budget_usd": float(max(budget.daily_limit_usd - budget.current_spend, 0)) if budget and budget.budget_mode.value == "metered" else None,
+            "has_virtual_api_key": bool(budget and budget.virtual_api_key),
         }
 
     def _first_line(self, value: str) -> str:

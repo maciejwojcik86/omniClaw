@@ -17,8 +17,9 @@ See [SETUP.md](./SETUP.md) for runtime endpoint prerequisites.
 ## Scope
 
 This skill covers:
-- Calling `POST /v1/runtime/actions` for `gateway_start`, `gateway_stop`, `gateway_status`, and `list_agents`.
+- Calling `POST /v1/runtime/actions` for `gateway_start`, `gateway_stop`, `gateway_status`, `list_agents`, and `invoke_prompt`.
 - Running a deterministic smoke sequence for one agent.
+- Running a low-cost prompt invocation through the kernel-owned runtime surface.
 - Verifying runtime state in API responses and SQLite (`nodes.gateway_*` fields).
 
 ## Inputs
@@ -39,6 +40,8 @@ Host validation:
 ## Scripts (bundled in this skill)
 
 - `scripts/trigger_runtime_action.sh`: single runtime action caller.
+- `scripts/list_agents.sh`: canonical active-agent catalog wrapper.
+- `scripts/invoke_agent_prompt.sh`: canonical low-cost prompt invocation wrapper.
 - `scripts/smoke_gateway_control.sh`: end-to-end sequence (`start -> status -> stop -> status -> list`).
 
 ## Quick Workflow
@@ -49,7 +52,11 @@ Host validation:
    - `./scripts/smoke_gateway_control.sh --node-name Director_01`
 3. Apply smoke sequence:
    - `./scripts/smoke_gateway_control.sh --apply --node-name Director_01 --gateway-port 18790`
-4. Verify DB/runtime state:
+4. Read the canonical active-agent catalog:
+   - `./scripts/list_agents.sh --apply`
+5. Invoke a verification prompt:
+   - `./scripts/invoke_agent_prompt.sh --apply --node-name Director_01 --prompt "Reply with exactly: pong" --session-key cli:runtime-verify`
+6. Verify DB/runtime state when debugging only:
    - `./scripts/provisioning/list_agents_permissions.py --database /home/macos/omniClaw/workspace/omniclaw.db`
 
 ## Verification

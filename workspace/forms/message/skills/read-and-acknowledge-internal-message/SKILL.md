@@ -2,14 +2,14 @@
 name: read-and-acknowledge-internal-message
 description: Acknowledge and archive unread `message` forms with one tool call.
 ---
-Inspect `inbox/unread/` for unread message forms.
+Inspect `inbox/new/` for newly delivered message forms.
 
 For each unread message form:
    - Read and understand the message.
    - If a response is needed, draft a reply message using following `draft-internal-message` skill.
 
    - Acknowledge/archive the received message by running exactly:
-     - `python3 skills/read-and-acknowledge-internal-message/scripts/acknowledge_and_archive_message.py --apply --workspace-root /home/macos/omniClaw/workspace/agents/Director_01/workspace --form-file <unread_filename>`
+     - `python3 skills/read-and-acknowledge-internal-message/scripts/acknowledge_and_archive_message.py --apply --workspace-root /home/macos/omniClaw/workspace/agents/Director_01/workspace --form-file <new_filename>`
 
 
 ## Runtime Notes
@@ -20,7 +20,7 @@ What the tool does:
 - updates form status in DB to `ARCHIVED` via `/v1/forms/actions` (`acknowledge_message_read`)
 - updates markdown frontmatter stage to `ARCHIVED`
 - updates markdown frontmatter `decision` to `acknowledge_read`
-- moves file from `inbox/unread/` to `inbox/read/`
+- moves file from `inbox/new/` to `inbox/read/`
 - kernel creates a copy under master archive (`workspace/form_archive/message/<form_id>/...`)
 - preflights kernel health (`/healthz`) before moving files, so connection failures do not leave partial state
 - resolves actor identity from frontmatter `target` by default (or explicit `--actor-node-id` / `--actor-node-name`)

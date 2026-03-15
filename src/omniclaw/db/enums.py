@@ -53,3 +53,8 @@ class FormTypeLifecycle(str, Enum):
     VALIDATED = "VALIDATED"
     ACTIVE = "ACTIVE"
     DEPRECATED = "DEPRECATED"
+
+
+class BudgetMode(str, Enum):
+    METERED = "metered"
+    FREE = "free"

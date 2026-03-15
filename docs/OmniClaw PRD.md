@@ -66,9 +66,9 @@ A key to preventing "hallucination loops" is enforcing strict **note-keeping dis
 
 When the Kernel spawns a new Agent, it generates this strict directory structure:  
 `/home/agent_xyz/workspace/`  
- `├─ inbox/unread/         (Kernel drops incoming routed Forms here)`  
+ `├─ inbox/new/            (Kernel drops incoming routed Forms here)`  
  `├─ inbox/read/`             
- `├─ outbox/pending/       (Agent saves Forms here for Kernel routing)`  
+ `├─ outbox/send/       (Agent saves Forms here for Kernel routing)`  
  `├─ outbox/sent/`            
  `├─ notes/TODO.md         (Single owner task list: priority, due, status)`  
  `├─ notes/DECISIONS.md    (Append-only decision log: when/why/approved by)`  
@@ -250,17 +250,17 @@ The Kernel requires a relational database (SQLite/PostgreSQL) to act as the ulti
 #### **A. The Form State Daemon**
 
 Agents communicate exclusively via a hybrid file-system approach.
-Runs every 5 seconds. Scans all /outbox/pending/ folders.
+Runs every 5 seconds. Scans all /outbox/send/ folders.
 
 * Parses YAML frontmatter.  
 * Updates forms\_ledger in the DB.  
 * If status \== approved on a form, it triggers the function (e.g. spawn new user and set up nullclaw, or run other scripts)  
-* Moves the physical .md file to the target's /inbox/unread/ folder (and move sender copy to 'sent' subfolder)
+* Moves the physical .md file to the target's /inbox/new/ folder (and move sender copy to 'sent' subfolder)
 
 Simple eform example
-* **Sending Mail:** An agent creates a .md file in /workspace/outbox/pending/ with YAML frontmatter.  
-* **Kernel Routing:** The Kernel daemon detects the file, reads the frontmatter, verifies the sender has permission to message the target, executes budget transfers if present, and securely copies the file to the target's /inbox/unread/. 
-* **Receiving Mail (Heartbeat):** Each Nullclaw agent has a heartbeat.md file that triggers on wake. It checks /inbox/unread/, processes the contents, and moves the email to /inbox/read/.
+* **Sending Mail:** An agent creates a .md file in /workspace/outbox/send/ with YAML frontmatter.  
+* **Kernel Routing:** The Kernel daemon detects the file, reads the frontmatter, verifies the sender has permission to message the target, executes budget transfers if present, and securely copies the file to the target's /inbox/new/. 
+* **Receiving Mail (Heartbeat):** Each Nullclaw agent has a heartbeat.md file that triggers on wake. It checks /inbox/new/, processes the contents, and moves the email to /inbox/read/.
 Alternatively we can use claw agent Hearthbeat.md to prompt it to read and act on new unread files in the inbox
 
 
@@ -364,7 +364,7 @@ This roadmap is designed for an AI Coding Agent (e.g., Claude Code) to execute i
 * \[ \] Install Nullclaw framework.  
 * \[ \] Create the systemd wrapper template.  
 * \[ \] Implement the Context Stacking logic (combining Constitution \+ OKRs \+ AGENTS.md).  
-* \[ \] Implement the Heartbeat cycle logic in Nullclaw to process /inbox/unread/ and update TODO.md.  
+* \[ \] Implement the Heartbeat cycle logic in Nullclaw to process /inbox/new/ and update TODO.md.  
 * \[ \] Spawn Agent\_000 (The Director) and Human\_01.  
 * *Definition of Done:* Human sends a webhook message that drops a .md file into the Director's inbox; Director wakes up, reads it, logs it in DECISIONS.md, and routes a response back.
 
@@ -406,7 +406,7 @@ This roadmap is designed for an AI Coding Agent (e.g., Claude Code) to execute i
 ### **Phase 3: Context Injector & Nullclaw Integration**
 
 * \[ \] Write the templating engine to inject DB variables into AGENTS.md.  
-* \[ \] Install Nullclaw, configuring its heartbeat to read /inbox/unread/.
+* \[ \] Install Nullclaw, configuring its heartbeat to read /inbox/new/.
 
 ### **Phase 4: Corporate Workflows (The Skills)**
 

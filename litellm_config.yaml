@@ -1,0 +1,23 @@
+model_list:
+  - model_name: openai-codex/gpt-5.4
+    litellm_params:
+      model: openrouter/openai/gpt-4o
+      api_key: os.environ/OPEN_ROUTER_API_KEY
+  - model_name: openrouter/minimax/minimax-01-2.5
+    litellm_params:
+      model: openrouter/minimax/minimax-01-2.5
+      api_key: os.environ/OPEN_ROUTER_API_KEY
+  - model_name: openrouter/google/gemini-3.1-flash-lite-preview
+    litellm_params:
+      model: openrouter/google/gemini-3.1-flash-lite-preview
+      api_key: os.environ/OPEN_ROUTER_API_KEY
+  - model_name: openrouter/stepfun/step-3.5-flash:free
+    litellm_params:
+      model: openrouter/stepfun/step-3.5-flash:free
+      api_key: os.environ/OPEN_ROUTER_API_KEY
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+litellm_settings:
+  drop_params: true

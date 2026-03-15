@@ -6,9 +6,12 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
+from omniclaw.config import load_settings
 from omniclaw.db.enums import NodeStatus, NodeType
-from omniclaw.db.models import Node
+from omniclaw.db.models import Node, Budget
 from omniclaw.db.repository import KernelRepository
+from omniclaw.instructions import InstructionsService, derive_instruction_template_root
+from omniclaw.litellm_client import LiteLLMClient
 from omniclaw.provisioning.contracts import ProvisioningAdapter
 from omniclaw.provisioning.scaffold import ensure_nanobot_config
 from omniclaw.provisioning.schemas import ProvisioningActionRequest
@@ -18,6 +21,8 @@ class ProvisioningService:
     def __init__(self, *, adapter: ProvisioningAdapter, repository: KernelRepository):
         self._adapter = adapter
         self._repository = repository
+        self._instructions_service = InstructionsService(repository=repository)
+        self._settings = load_settings()
 
     def execute(self, request: ProvisioningActionRequest) -> dict[str, object]:
         action = request.action
@@ -116,6 +121,7 @@ class ProvisioningService:
                 node_type=NodeType.HUMAN,
                 name=resolved_name,
                 status=NodeStatus.ACTIVE,
+                role_name=request.role_name,
                 linux_uid=user_result.uid,
                 linux_username=username,
                 linux_password=linux_password,
@@ -155,16 +161,38 @@ class ProvisioningService:
                 fallback=self._default_agent_workspace_root(resolved_name),
             )
             resolved_workspace_root = workspace_root.expanduser().resolve()
+            instruction_template_root = derive_instruction_template_root(
+                node_name=resolved_name,
+                workspace_root=str(resolved_workspace_root),
+            ).resolve()
             runtime_config_path = self._resolve_config_path(
                 request,
                 workspace_root=resolved_workspace_root,
             )
             workspace_result = self._adapter.ensure_workspace(workspace_root=workspace_root)
+            
+            # --- LiteLLM Key Generation ---
+            virtual_key = None
+            if self._settings.litellm_proxy_url and self._settings.litellm_master_key:
+                import asyncio
+                client = LiteLLMClient(
+                    proxy_url=self._settings.litellm_proxy_url, 
+                    master_key=self._settings.litellm_master_key
+                )
+                try:
+                    # We use the generated/assigned node name as user_id
+                    key_data = asyncio.run(client.generate_virtual_key(user_id=resolved_name))
+                    virtual_key = key_data.get("key")
+                finally:
+                    asyncio.run(client.close())
+                    
             runtime_config_result = ensure_nanobot_config(
                 config_path=runtime_config_path,
                 workspace_root=resolved_workspace_root,
                 apply=True,
                 primary_model=request.primary_model,
+                litellm_api_base=self._settings.litellm_proxy_url,
+                litellm_api_key=virtual_key,
             )
             primary_model = self._resolve_primary_model(
                 request=request,
@@ -175,10 +203,12 @@ class ProvisioningService:
                 node_type=NodeType.AGENT,
                 name=resolved_name,
                 status=NodeStatus.ACTIVE,
+                role_name=request.role_name,
                 linux_username=username,
                 linux_password=linux_password,
                 workspace_root=str(resolved_workspace_root),
                 runtime_config_path=str(runtime_config_path),
+                instruction_template_root=str(instruction_template_root),
                 primary_model=primary_model,
                 autonomy_level=request.autonomy_level,
             )
@@ -191,12 +221,36 @@ class ProvisioningService:
             except ValueError as exc:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+            self._repository.upsert_budget(
+                node_id=node.id,
+                virtual_api_key=virtual_key,
+                parent_node_id=manager.id,
+            )
+
+            node = self._instructions_service.ensure_default_template_for_node(node=node)
+            render_result = self._instructions_service.sync_node_render(node=node)
+            skill_distribution = self._instructions_service.sync_manager_skill_distribution()
+            if render_result["status"] != "rendered":
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"initial AGENTS render failed for '{node.name}': {render_result['error']}",
+                )
+            if skill_distribution.get("status") != "ok":
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        "manager instruction skill distribution failed: "
+                        f"{skill_distribution.get('status')}"
+                    ),
+                )
             manager_subordinate_count = len(self._repository.list_children(parent_node_id=manager.id))
             result = {
                 "action": action,
                 "workspace": asdict(workspace_result),
                 "runtime_config": runtime_config_result,
                 "node": self._serialize_node(node=node, created=created),
+                "instructions": render_result,
+                "manager_skill_distribution": skill_distribution,
                 "manager": {
                     "id": manager.id,
                     "name": manager.name,
@@ -220,7 +274,21 @@ class ProvisioningService:
             except ValueError as exc:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+            self._repository.upsert_budget(
+                node_id=target.id,
+                parent_node_id=manager.id,
+            )
+
             manager_subordinate_count = len(self._repository.list_children(parent_node_id=manager.id))
+            skill_distribution = self._instructions_service.sync_manager_skill_distribution()
+            if skill_distribution.get("status") != "ok":
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        "manager instruction skill distribution failed: "
+                        f"{skill_distribution.get('status')}"
+                    ),
+                )
             return self._attach_operations(
                 {
                     "action": action,
@@ -241,6 +309,7 @@ class ProvisioningService:
                         "child_node_id": relationship.child_node_id,
                         "relationship_type": relationship.relationship_type.value,
                     },
+                    "manager_skill_distribution": skill_distribution,
                 }
             )
 
@@ -356,10 +425,12 @@ class ProvisioningService:
             "id": node.id,
             "type": node.type.value,
             "name": node.name,
+            "role_name": node.role_name,
             "linux_uid": node.linux_uid,
             "linux_username": node.linux_username,
             "workspace_root": node.workspace_root,
             "runtime_config_path": node.runtime_config_path,
+            "instruction_template_root": node.instruction_template_root,
             "primary_model": node.primary_model,
             "password_present": bool(node.linux_password),
             "status": node.status.value,
