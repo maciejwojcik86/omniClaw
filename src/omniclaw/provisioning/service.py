@@ -6,23 +6,43 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from omniclaw.config import load_settings
+from omniclaw.company_paths import CompanyPaths, build_company_paths
+from omniclaw.config import Settings, load_settings
 from omniclaw.db.enums import NodeStatus, NodeType
 from omniclaw.db.models import Node, Budget
 from omniclaw.db.repository import KernelRepository
+from omniclaw.forms.service import FormsService
 from omniclaw.instructions import InstructionsService, derive_instruction_template_root
 from omniclaw.litellm_client import LiteLLMClient
 from omniclaw.provisioning.contracts import ProvisioningAdapter
 from omniclaw.provisioning.scaffold import ensure_nanobot_config
 from omniclaw.provisioning.schemas import ProvisioningActionRequest
+from omniclaw.skills.service import SkillsService
 
 
 class ProvisioningService:
-    def __init__(self, *, adapter: ProvisioningAdapter, repository: KernelRepository):
+    def __init__(
+        self,
+        *,
+        adapter: ProvisioningAdapter,
+        repository: KernelRepository,
+        settings: Settings | None = None,
+    ):
         self._adapter = adapter
         self._repository = repository
-        self._instructions_service = InstructionsService(repository=repository)
-        self._settings = load_settings()
+        self._settings = settings or load_settings()
+        self._company_paths: CompanyPaths = build_company_paths(self._settings)
+        self._skills_service = SkillsService(repository=repository, settings=self._settings)
+        self._instructions_service = InstructionsService(
+            repository=repository,
+            settings=self._settings,
+            skills_service=self._skills_service,
+        )
+        self._forms_service = FormsService(
+            repository=repository,
+            settings=self._settings,
+            skills_service=self._skills_service,
+        )
 
     def execute(self, request: ProvisioningActionRequest) -> dict[str, object]:
         action = request.action
@@ -46,6 +66,7 @@ class ProvisioningService:
             if request.workspace and request.workspace.scaffold:
                 workspace_result = self._adapter.ensure_workspace(
                     workspace_root=Path(request.workspace.root),
+                    template_root=self._company_paths.workspace_templates_root,
                 )
                 response["workspace"] = asdict(workspace_result)
 
@@ -53,7 +74,10 @@ class ProvisioningService:
 
         if action == "create_workspace":
             workspace_root = self._resolve_workspace_root(request)
-            workspace_result = self._adapter.ensure_workspace(workspace_root=workspace_root)
+            workspace_result = self._adapter.ensure_workspace(
+                workspace_root=workspace_root,
+                template_root=self._company_paths.workspace_templates_root,
+            )
             return self._attach_operations(
                 {
                     "action": action,
@@ -100,7 +124,10 @@ class ProvisioningService:
                 uid=request.uid,
                 groups=request.groups,
             )
-            workspace_result = self._adapter.ensure_workspace(workspace_root=workspace_root)
+            workspace_result = self._adapter.ensure_workspace(
+                workspace_root=workspace_root,
+                template_root=self._company_paths.workspace_templates_root,
+            )
 
             permission_result = None
             if request.manager_group:
@@ -164,12 +191,16 @@ class ProvisioningService:
             instruction_template_root = derive_instruction_template_root(
                 node_name=resolved_name,
                 workspace_root=str(resolved_workspace_root),
+                company_paths=self._company_paths,
             ).resolve()
             runtime_config_path = self._resolve_config_path(
                 request,
                 workspace_root=resolved_workspace_root,
             )
-            workspace_result = self._adapter.ensure_workspace(workspace_root=workspace_root)
+            workspace_result = self._adapter.ensure_workspace(
+                workspace_root=workspace_root,
+                template_root=self._company_paths.workspace_templates_root,
+            )
             
             # --- LiteLLM Key Generation ---
             virtual_key = None
@@ -193,6 +224,7 @@ class ProvisioningService:
                 primary_model=request.primary_model,
                 litellm_api_base=self._settings.litellm_proxy_url,
                 litellm_api_key=virtual_key,
+                template_root=self._company_paths.workspace_templates_root,
             )
             primary_model = self._resolve_primary_model(
                 request=request,
@@ -229,7 +261,10 @@ class ProvisioningService:
 
             node = self._instructions_service.ensure_default_template_for_node(node=node)
             render_result = self._instructions_service.sync_node_render(node=node)
-            skill_distribution = self._instructions_service.sync_manager_skill_distribution()
+            default_skills = self._skills_service.seed_default_loose_skills_for_node(node=node)
+            form_skill_refresh = self._forms_service.refresh_active_form_skill_assignments()
+            skill_distribution = self._skills_service.sync_manager_policy_assignments()
+            skill_sync = self._skills_service.sync_node_skills(node=node)
             if render_result["status"] != "rendered":
                 raise HTTPException(
                     status_code=500,
@@ -243,6 +278,16 @@ class ProvisioningService:
                         f"{skill_distribution.get('status')}"
                     ),
                 )
+            if form_skill_refresh.get("summary", {}).get("failed", 0):
+                raise HTTPException(
+                    status_code=500,
+                    detail="active form skill assignment refresh failed during provisioning",
+                )
+            if skill_sync["status"] != "synced":
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"initial skill sync failed for '{node.name}': {skill_sync['error']}",
+                )
             manager_subordinate_count = len(self._repository.list_children(parent_node_id=manager.id))
             result = {
                 "action": action,
@@ -250,6 +295,9 @@ class ProvisioningService:
                 "runtime_config": runtime_config_result,
                 "node": self._serialize_node(node=node, created=created),
                 "instructions": render_result,
+                "default_skills": [skill.name for skill in default_skills],
+                "form_skill_refresh": form_skill_refresh,
+                "skill_sync": skill_sync,
                 "manager_skill_distribution": skill_distribution,
                 "manager": {
                     "id": manager.id,
@@ -280,7 +328,7 @@ class ProvisioningService:
             )
 
             manager_subordinate_count = len(self._repository.list_children(parent_node_id=manager.id))
-            skill_distribution = self._instructions_service.sync_manager_skill_distribution()
+            skill_distribution = self._skills_service.sync_manager_policy_assignments()
             if skill_distribution.get("status") != "ok":
                 raise HTTPException(
                     status_code=500,
@@ -289,6 +337,9 @@ class ProvisioningService:
                         f"{skill_distribution.get('status')}"
                     ),
                 )
+            manager_skill_sync = None
+            if manager.workspace_root:
+                manager_skill_sync = self._skills_service.sync_node_skills(node=manager)
             return self._attach_operations(
                 {
                     "action": action,
@@ -310,6 +361,7 @@ class ProvisioningService:
                         "relationship_type": relationship.relationship_type.value,
                     },
                     "manager_skill_distribution": skill_distribution,
+                    "manager_skill_sync": manager_skill_sync,
                 }
             )
 
@@ -350,12 +402,10 @@ class ProvisioningService:
         return (Path(home_dir) / ".nanobot" / "config.json").expanduser().resolve()
 
     def _default_human_workspace_root(self, username: str) -> Path:
-        repo_root = Path(__file__).resolve().parents[3]
-        return repo_root / "workspace" / username
+        return self._company_paths.root / username
 
     def _default_agent_workspace_root(self, agent_name: str) -> Path:
-        repo_root = Path(__file__).resolve().parents[3]
-        return repo_root / "workspace" / "agents" / agent_name / "workspace"
+        return self._company_paths.agents_root / agent_name / "workspace"
 
     def _resolve_manager_node(self, *, request: ProvisioningActionRequest, required: bool) -> Node | None:
         manager_node_id = request.manager_node_id

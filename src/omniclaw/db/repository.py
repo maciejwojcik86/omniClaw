@@ -12,14 +12,18 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm.exc import StaleDataError
 
+from omniclaw.company_paths import CompanyPaths, build_company_paths, repo_workspace_root
+from omniclaw.config import Settings, build_settings, load_settings
 from omniclaw.db.enums import (
+    BudgetMode,
     FormStatus,
     FormTypeLifecycle,
+    MasterSkillLifecycleStatus,
     NodeStatus,
+    NodeSkillAssignmentSource,
     NodeType,
     RelationshipType,
     SkillValidationStatus,
-    BudgetMode,
 )
 from omniclaw.db.models import (
     AgentLLMCall,
@@ -33,6 +37,7 @@ from omniclaw.db.models import (
     Hierarchy,
     MasterSkill,
     Node,
+    NodeSkillAssignment,
 )
 
 
@@ -44,8 +49,21 @@ _UNSET = object()
 
 
 class KernelRepository:
-    def __init__(self, session_factory: sessionmaker[Session]):
+    def __init__(
+        self,
+        session_factory: sessionmaker[Session],
+        *,
+        settings: Settings | None = None,
+    ):
         self._session_factory = session_factory
+        if settings is not None:
+            self._settings = settings
+        else:
+            try:
+                self._settings = load_settings()
+            except (FileNotFoundError, ValueError):
+                self._settings = build_settings(company_workspace_root=repo_workspace_root())
+        self._company_paths: CompanyPaths = build_company_paths(self._settings)
 
     def create_node(
         self,
@@ -572,6 +590,22 @@ class KernelRepository:
             return raw_mode
         return BudgetMode(str(raw_mode).strip().lower())
 
+    @staticmethod
+    def _coerce_master_skill_lifecycle_status(
+        raw_status: MasterSkillLifecycleStatus | str,
+    ) -> MasterSkillLifecycleStatus:
+        if isinstance(raw_status, MasterSkillLifecycleStatus):
+            return raw_status
+        return MasterSkillLifecycleStatus(str(raw_status).strip().upper())
+
+    @staticmethod
+    def _coerce_node_skill_assignment_source(
+        raw_source: NodeSkillAssignmentSource | str,
+    ) -> NodeSkillAssignmentSource:
+        if isinstance(raw_source, NodeSkillAssignmentSource):
+            return raw_source
+        return NodeSkillAssignmentSource(str(raw_source).strip().upper())
+
     def insert_agent_session_export(
         self,
         *,
@@ -802,7 +836,8 @@ class KernelRepository:
         if workflow_package is None:
             raise ValueError(
                 "message form type is missing and no workspace workflow exists at "
-                "'workspace/forms/message/workflow.json'; publish and activate a message workflow"
+                f"'{self._company_paths.forms_root / 'message' / 'workflow.json'}'; "
+                "publish and activate a message workflow"
             )
 
         workflow_graph: dict[str, Any]
@@ -841,6 +876,7 @@ class KernelRepository:
         description: str | None,
         version: str,
         validation_status: SkillValidationStatus = SkillValidationStatus.VALIDATED,
+        lifecycle_status: MasterSkillLifecycleStatus = MasterSkillLifecycleStatus.ACTIVE,
     ) -> MasterSkill:
         normalized_name = name.strip()
         if not normalized_name:
@@ -855,6 +891,7 @@ class KernelRepository:
             normalized_form_type_key = None
         normalized_description = description.strip() if isinstance(description, str) and description.strip() else None
         normalized_version = version.strip() if isinstance(version, str) and version.strip() else "1.0.0"
+        normalized_lifecycle = self._coerce_master_skill_lifecycle_status(lifecycle_status)
 
         with self._session_factory() as session:
             existing = (
@@ -871,6 +908,7 @@ class KernelRepository:
                     description=normalized_description,
                     version=normalized_version,
                     validation_status=validation_status,
+                    lifecycle_status=normalized_lifecycle,
                 )
                 session.add(existing)
             else:
@@ -879,16 +917,252 @@ class KernelRepository:
                 existing.description = normalized_description
                 existing.version = normalized_version
                 existing.validation_status = validation_status
+                existing.lifecycle_status = normalized_lifecycle
             session.commit()
             session.refresh(existing)
             return existing
 
-    def list_master_skills(self, *, form_type_key: str | None = None) -> list[MasterSkill]:
+    def get_master_skill(
+        self,
+        *,
+        skill_id: str | None = None,
+        name: str | None = None,
+    ) -> MasterSkill | None:
+        if not skill_id and not name:
+            raise ValueError("skill_id or name is required")
+
+        with self._session_factory() as session:
+            query = session.query(MasterSkill)
+            if skill_id is not None:
+                query = query.filter(MasterSkill.id == skill_id)
+            if name is not None:
+                query = query.filter(MasterSkill.name == name.strip())
+            return query.order_by(MasterSkill.created_at.asc()).first()
+
+    def list_master_skills(
+        self,
+        *,
+        form_type_key: str | None = None,
+        lifecycle_status: MasterSkillLifecycleStatus | str | None = None,
+        names: list[str] | None = None,
+        loose_only: bool = False,
+    ) -> list[MasterSkill]:
         with self._session_factory() as session:
             query = session.query(MasterSkill)
             if form_type_key is not None:
                 query = query.filter(MasterSkill.form_type_key == form_type_key)
+            if loose_only:
+                query = query.filter(MasterSkill.form_type_key.is_(None))
+            if lifecycle_status is not None:
+                query = query.filter(
+                    MasterSkill.lifecycle_status == self._coerce_master_skill_lifecycle_status(lifecycle_status)
+                )
+            if names:
+                normalized_names = [item.strip() for item in names if isinstance(item, str) and item.strip()]
+                if normalized_names:
+                    query = query.filter(MasterSkill.name.in_(normalized_names))
             return query.order_by(MasterSkill.name.asc(), MasterSkill.created_at.asc()).all()
+
+    def set_master_skill_lifecycle_status(
+        self,
+        *,
+        skill_id: str | None = None,
+        name: str | None = None,
+        lifecycle_status: MasterSkillLifecycleStatus | str,
+    ) -> MasterSkill:
+        if not skill_id and not name:
+            raise ValueError("skill_id or name is required")
+
+        normalized_lifecycle = self._coerce_master_skill_lifecycle_status(lifecycle_status)
+        with self._session_factory() as session:
+            query = session.query(MasterSkill)
+            if skill_id is not None:
+                query = query.filter(MasterSkill.id == skill_id)
+            if name is not None:
+                query = query.filter(MasterSkill.name == name.strip())
+            skill = query.order_by(MasterSkill.created_at.asc()).first()
+            if skill is None:
+                raise ValueError("master skill not found")
+            skill.lifecycle_status = normalized_lifecycle
+            session.commit()
+            session.refresh(skill)
+            return skill
+
+    def upsert_node_skill_assignment(
+        self,
+        *,
+        node_id: str,
+        skill_id: str,
+        assignment_source: NodeSkillAssignmentSource | str,
+        assigned_by_node_id: str | None = None,
+    ) -> NodeSkillAssignment:
+        normalized_source = self._coerce_node_skill_assignment_source(assignment_source)
+        with self._session_factory() as session:
+            existing = (
+                session.query(NodeSkillAssignment)
+                .filter(
+                    NodeSkillAssignment.node_id == node_id,
+                    NodeSkillAssignment.skill_id == skill_id,
+                    NodeSkillAssignment.assignment_source == normalized_source,
+                )
+                .order_by(NodeSkillAssignment.created_at.asc())
+                .first()
+            )
+            if existing is None:
+                existing = NodeSkillAssignment(
+                    node_id=node_id,
+                    skill_id=skill_id,
+                    assignment_source=normalized_source,
+                    assigned_by_node_id=assigned_by_node_id,
+                )
+                session.add(existing)
+            else:
+                existing.assigned_by_node_id = assigned_by_node_id
+            session.commit()
+            session.refresh(existing)
+            return existing
+
+    def replace_node_skill_assignments_for_source(
+        self,
+        *,
+        node_id: str,
+        assignment_source: NodeSkillAssignmentSource | str,
+        skill_ids: list[str],
+        assigned_by_node_id: str | None = None,
+    ) -> list[NodeSkillAssignment]:
+        normalized_source = self._coerce_node_skill_assignment_source(assignment_source)
+        normalized_skill_ids = sorted({item for item in skill_ids if item})
+        with self._session_factory() as session:
+            session.query(NodeSkillAssignment).filter(
+                NodeSkillAssignment.node_id == node_id,
+                NodeSkillAssignment.assignment_source == normalized_source,
+            ).delete()
+            for skill_id in normalized_skill_ids:
+                session.add(
+                    NodeSkillAssignment(
+                        node_id=node_id,
+                        skill_id=skill_id,
+                        assignment_source=normalized_source,
+                        assigned_by_node_id=assigned_by_node_id,
+                    )
+                )
+            session.commit()
+            return (
+                session.query(NodeSkillAssignment)
+                .filter(
+                    NodeSkillAssignment.node_id == node_id,
+                    NodeSkillAssignment.assignment_source == normalized_source,
+                )
+                .order_by(NodeSkillAssignment.created_at.asc(), NodeSkillAssignment.skill_id.asc())
+                .all()
+            )
+
+    def replace_form_skill_assignments(
+        self,
+        *,
+        form_type_key: str,
+        assignments: list[tuple[str, str]],
+    ) -> list[NodeSkillAssignment]:
+        normalized_form_type_key = form_type_key.strip()
+        if not normalized_form_type_key:
+            raise ValueError("form_type_key is required")
+
+        deduped_assignments = sorted(
+            {(node_id, skill_id) for node_id, skill_id in assignments if node_id and skill_id},
+            key=lambda item: (item[0], item[1]),
+        )
+        with self._session_factory() as session:
+            skill_rows = (
+                session.query(MasterSkill)
+                .filter(MasterSkill.form_type_key == normalized_form_type_key)
+                .order_by(MasterSkill.created_at.asc())
+                .all()
+            )
+            form_skill_ids = [item.id for item in skill_rows]
+            if form_skill_ids:
+                session.query(NodeSkillAssignment).filter(
+                    NodeSkillAssignment.skill_id.in_(form_skill_ids),
+                    NodeSkillAssignment.assignment_source == NodeSkillAssignmentSource.FORM_STAGE,
+                ).delete(synchronize_session=False)
+            for node_id, skill_id in deduped_assignments:
+                session.add(
+                    NodeSkillAssignment(
+                        node_id=node_id,
+                        skill_id=skill_id,
+                        assignment_source=NodeSkillAssignmentSource.FORM_STAGE,
+                    )
+                )
+            session.commit()
+            if not form_skill_ids:
+                return []
+            return (
+                session.query(NodeSkillAssignment)
+                .filter(
+                    NodeSkillAssignment.skill_id.in_(form_skill_ids),
+                    NodeSkillAssignment.assignment_source == NodeSkillAssignmentSource.FORM_STAGE,
+                )
+                .order_by(NodeSkillAssignment.node_id.asc(), NodeSkillAssignment.skill_id.asc())
+                .all()
+            )
+
+    def delete_node_skill_assignments(
+        self,
+        *,
+        node_id: str,
+        skill_ids: list[str] | None = None,
+        assignment_source: NodeSkillAssignmentSource | str | None = None,
+    ) -> int:
+        with self._session_factory() as session:
+            query = session.query(NodeSkillAssignment).filter(NodeSkillAssignment.node_id == node_id)
+            if skill_ids:
+                normalized_skill_ids = [item for item in skill_ids if item]
+                if normalized_skill_ids:
+                    query = query.filter(NodeSkillAssignment.skill_id.in_(normalized_skill_ids))
+            if assignment_source is not None:
+                query = query.filter(
+                    NodeSkillAssignment.assignment_source == self._coerce_node_skill_assignment_source(assignment_source)
+                )
+            deleted = query.delete(synchronize_session=False)
+            session.commit()
+            return int(deleted)
+
+    def list_node_skill_assignments(
+        self,
+        *,
+        node_id: str | None = None,
+        skill_id: str | None = None,
+        assignment_source: NodeSkillAssignmentSource | str | None = None,
+    ) -> list[NodeSkillAssignment]:
+        with self._session_factory() as session:
+            query = session.query(NodeSkillAssignment)
+            if node_id is not None:
+                query = query.filter(NodeSkillAssignment.node_id == node_id)
+            if skill_id is not None:
+                query = query.filter(NodeSkillAssignment.skill_id == skill_id)
+            if assignment_source is not None:
+                query = query.filter(
+                    NodeSkillAssignment.assignment_source == self._coerce_node_skill_assignment_source(assignment_source)
+                )
+            return query.order_by(
+                NodeSkillAssignment.node_id.asc(),
+                NodeSkillAssignment.created_at.asc(),
+                NodeSkillAssignment.skill_id.asc(),
+            ).all()
+
+    def list_node_skill_assignment_details(
+        self,
+        *,
+        node_id: str,
+    ) -> list[tuple[NodeSkillAssignment, MasterSkill]]:
+        with self._session_factory() as session:
+            rows = (
+                session.query(NodeSkillAssignment, MasterSkill)
+                .join(MasterSkill, MasterSkill.id == NodeSkillAssignment.skill_id)
+                .filter(NodeSkillAssignment.node_id == node_id)
+                .order_by(MasterSkill.name.asc(), NodeSkillAssignment.assignment_source.asc())
+                .all()
+            )
+            return [(assignment, skill) for assignment, skill in rows]
 
     # ---------------------------------------------------------------------
     # Form ledger and transition events
@@ -1282,10 +1556,13 @@ class KernelRepository:
         return normalized
 
     def _workspace_root(self) -> Path:
-        return Path(__file__).resolve().parents[3] / "workspace"
+        return self._company_paths.root
 
     def _load_workspace_form_package(self, *, type_key: str) -> dict[str, Any] | None:
-        workflow_path = self._workspace_root() / "forms" / type_key / "workflow.json"
+        forms_root = self._company_paths.forms_root
+        if not forms_root.exists():
+            forms_root = repo_workspace_root() / "forms"
+        workflow_path = forms_root / type_key / "workflow.json"
         if not workflow_path.exists():
             return None
         try:

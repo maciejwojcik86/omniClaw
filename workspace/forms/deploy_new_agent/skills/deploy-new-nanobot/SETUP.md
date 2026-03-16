@@ -28,11 +28,11 @@ Official install:
 uv tool install nanobot-ai
 ```
 
-Local fork path (recommended when you need the `/home/macos/nanobot/` customizations):
+Monorepo fork path (recommended when you need the vendored Nanobot customizations):
 
 ```bash
 cd /home/macos/omniClaw
-workspace/forms/deploy_new_agent/skills/deploy-new-nanobot/scripts/package_nanobot_source.sh --apply --source-dir /home/macos/nanobot --output-dir /home/macos/omniClaw/workspace/runtime_packages
+workspace/forms/deploy_new_agent/skills/deploy-new-nanobot/scripts/package_nanobot_source.sh --apply --source-dir /home/macos/omniClaw/third_party/nanobot --output-dir /home/macos/.omniClaw/workspace/runtime_packages
 ```
 
 On another machine:
@@ -56,7 +56,7 @@ If the selected provider uses API keys instead, add them to the deployed `config
 
 ```bash
 cd /home/macos/omniClaw
-uv run python main.py
+uv run omniclaw
 ```
 
 ## 5) Human workspace baseline inside repo

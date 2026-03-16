@@ -79,7 +79,7 @@ I) End-to-end autonomy gate
 
 4) VERIFY CONTINUOUSLY
 - Minimum checks after each milestone:
-  - `uv run pytest -q`
+  - `uv run pytest -q tests`
   - `openspec validate --type change <change-id> --strict`
 - Run full sweep at meaningful checkpoints:
   - `openspec validate --all --strict`

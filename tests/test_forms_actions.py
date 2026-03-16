@@ -15,7 +15,7 @@ if str(SRC) not in sys.path:
 
 from omniclaw.app import create_app
 from omniclaw.config import Settings
-from omniclaw.db.enums import NodeStatus, NodeType
+from omniclaw.db.enums import NodeSkillAssignmentSource, NodeStatus, NodeType
 from omniclaw.db.models import FormTransitionEvent
 from omniclaw.db.repository import KernelRepository
 from omniclaw.db.session import create_session_factory
@@ -1151,6 +1151,118 @@ def test_forms_actions_activate_distributes_stage_skills_to_target_agent(tmp_pat
     )
     assert activate_response.status_code == 200
     assert target_skill_file.exists()
+
+
+def test_forms_actions_activate_records_form_stage_assignments_and_restores_skill_sync(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    monkeypatch.setattr(FormsService, "_workspace_root", lambda self: workspace_root)
+    type_key = "message_skill_assignment_restore_form"
+    _seed_stage_skills(
+        workspace_root=workspace_root,
+        type_key=type_key,
+        skill_names=["draft-internal-message", "read-and-acknowledge-internal-message"],
+    )
+
+    database_url = f"sqlite:///{tmp_path / 'forms-stage-skill-restore.db'}"
+    settings = Settings(
+        app_name="omniclaw-kernel",
+        environment="test",
+        log_level="INFO",
+        database_url=database_url,
+        provisioning_mode="mock",
+        allow_privileged_provisioning=False,
+    )
+    migrate_database_to_head(database_url)
+    app = create_app(settings)
+    repository = KernelRepository(create_session_factory(database_url))
+
+    target_workspace = tmp_path / "target-restore-workspace"
+    target_workspace.mkdir(parents=True, exist_ok=True)
+    target = repository.create_node(
+        node_type=NodeType.AGENT,
+        name="Target_Restore_01",
+        status=NodeStatus.ACTIVE,
+        workspace_root=str(target_workspace.resolve()),
+    )
+
+    client = TestClient(app)
+    upsert_response = client.post(
+        "/v1/forms/actions",
+        json={
+            "action": "upsert_form_type",
+            "type_key": type_key,
+            "version": "9.9.3",
+            "workflow_graph": {
+                "start_stage": "DRAFT",
+                "end_stage": "ARCHIVED",
+                "stages": {
+                    "DRAFT": {
+                        "target": "{{initiator}}",
+                        "required_skill": "draft-internal-message",
+                        "decisions": {
+                            "send": "WAITING_TO_BE_READ",
+                        },
+                    },
+                    "WAITING_TO_BE_READ": {
+                        "target": "Target_Restore_01",
+                        "required_skill": "read-and-acknowledge-internal-message",
+                        "decisions": {
+                            "acknowledge_read": "ARCHIVED",
+                        },
+                    },
+                    "ARCHIVED": {
+                        "target": None,
+                        "is_terminal": True,
+                    },
+                },
+            },
+            "stage_metadata": {},
+        },
+    )
+    assert upsert_response.status_code == 200
+    assert upsert_response.json()["validation_errors"] == []
+
+    activate_response = client.post(
+        "/v1/forms/actions",
+        json={
+            "action": "activate_form_type",
+            "type_key": type_key,
+            "version": "9.9.3",
+        },
+    )
+    assert activate_response.status_code == 200
+
+    cataloged_skill = repository.get_master_skill(name="read-and-acknowledge-internal-message")
+    assert cataloged_skill is not None
+    assert cataloged_skill.form_type_key == type_key
+
+    assignments = repository.list_node_skill_assignments(
+        node_id=target.id,
+        assignment_source=NodeSkillAssignmentSource.FORM_STAGE,
+    )
+    assigned_skill_ids = {assignment.skill_id for assignment in assignments}
+    assert cataloged_skill.id in assigned_skill_ids
+
+    skills_root = target_workspace / "skills"
+    synced_skill = skills_root / "read-and-acknowledge-internal-message" / "SKILL.md"
+    assert synced_skill.exists()
+
+    shutil.rmtree(skills_root)
+    assert synced_skill.exists() is False
+
+    sync_response = client.post(
+        "/v1/skills/actions",
+        json={
+            "action": "sync_agent_skills",
+            "target_node_id": target.id,
+        },
+    )
+    assert sync_response.status_code == 200
+    assert sync_response.json()["sync"]["status"] == "synced"
+    assert synced_skill.exists()
 
 
 def test_acknowledge_message_read_accepts_actor_node_name(tmp_path: Path, monkeypatch) -> None:

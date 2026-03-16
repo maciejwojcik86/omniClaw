@@ -1,0 +1,6 @@
+{
+  "name": "manage-master-skills",
+  "version": "1.0.0",
+  "description": "Inspect the master skill catalog, review active loose skills, and change loose skill lifecycle state.",
+  "author": "omniclaw-kernel"
+}

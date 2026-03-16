@@ -11,7 +11,7 @@ from fastapi import HTTPException
 
 from omniclaw.budgets.engine import BudgetEngine, BudgetSnapshot
 from omniclaw.budgets.schemas import BudgetActionRequest
-from omniclaw.config import load_settings
+from omniclaw.config import Settings, load_settings
 from omniclaw.db.enums import BudgetMode
 from omniclaw.db.models import Node
 from omniclaw.db.repository import KernelRepository
@@ -22,9 +22,9 @@ logger = logging.getLogger(__name__)
 
 
 class BudgetService:
-    def __init__(self, repository: KernelRepository):
+    def __init__(self, repository: KernelRepository, settings: Settings | None = None):
         self._repository = repository
-        self._settings = load_settings()
+        self._settings = settings or load_settings()
         self._engine = BudgetEngine(repository=repository, settings=self._settings)
         self._instructions = InstructionsService(repository=repository, settings=self._settings)
 

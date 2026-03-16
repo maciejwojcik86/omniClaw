@@ -1,19 +1,58 @@
-#!/usr/bin/env python3
-import json
 import asyncio
+import argparse
+import json
 from datetime import datetime
-from pathlib import Path
 from decimal import Decimal
+from pathlib import Path
+import sys
 
-from omniclaw.config import load_settings
+ROOT = Path(__file__).resolve().parents[2]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from omniclaw.company_paths import build_company_paths
+from omniclaw.config import build_settings
 from omniclaw.db.repository import KernelRepository
 from omniclaw.db.session import create_session_factory
 from omniclaw.litellm_client import LiteLLMClient
 
-async def run() -> None:
-    settings = load_settings()
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Generate a company budget report for the selected workspace.")
+    parser.add_argument(
+        "--company",
+        help="Registered company slug or display name.",
+    )
+    parser.add_argument(
+        "--global-config-path",
+        help="Override the OmniClaw global config path.",
+    )
+    parser.add_argument(
+        "--company-workspace-root",
+        help="Legacy explicit company workspace root override.",
+    )
+    parser.add_argument(
+        "--output",
+        help="Optional report output path. Defaults to <company-workspace-root>/finances/company_budget_report.md.",
+    )
+    return parser.parse_args()
+
+
+async def run(
+    *,
+    company: str | None = None,
+    global_config_path: str | None = None,
+    company_workspace_root: str | None = None,
+    output: str | None = None,
+) -> None:
+    settings = build_settings(
+        company=company,
+        global_config_path=global_config_path,
+        company_workspace_root=company_workspace_root,
+    )
+    company_paths = build_company_paths(settings)
     session_factory = create_session_factory(settings.database_url)
-    repo = KernelRepository(session_factory)
+    repo = KernelRepository(session_factory, settings=settings)
     
     nodes = repo.list_active_agent_nodes_with_workspaces()
     total_budget = Decimal('0.0')
@@ -88,11 +127,24 @@ async def run() -> None:
     
     report_content = "\n".join(report_lines)
     
-    report_path = Path("/home/macos/omniClaw/workspace/company_budget_report.md")
+    report_path = (
+        Path(output).expanduser().resolve()
+        if output
+        else (company_paths.finances_root / "company_budget_report.md").resolve()
+    )
+    report_path.parent.mkdir(parents=True, exist_ok=True)
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(report_content)
-        
+
     print(f"Report generated at {report_path}")
 
 if __name__ == "__main__":
-    asyncio.run(run())
+    args = parse_args()
+    asyncio.run(
+        run(
+            company=args.company,
+            global_config_path=args.global_config_path,
+            company_workspace_root=args.company_workspace_root,
+            output=args.output,
+        )
+    )

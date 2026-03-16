@@ -1,6 +1,0 @@
-{
-  "name": "read-and-acknowledge-internal-message",
-  "version": "1.0.0",
-  "description": "Acknowledge and archive unread `message` forms with one tool call.",
-  "author": "omniclaw-kernel"
-}

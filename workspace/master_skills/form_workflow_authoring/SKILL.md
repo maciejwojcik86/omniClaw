@@ -8,9 +8,7 @@ This skill is the canonical SOP for turning a business process into:
 2. stage skill packages (`SKILL.md` + templates/scripts/docs)
 3. active kernel form type definition in DB
 
-## Primary References
-- `docs/form/SOP Designing Graph Forms.md`
-- `docs/form/prompt.md`
+
 
 ## System Model
 - OmniClaw routes **forms**, not chats.
@@ -29,6 +27,9 @@ For each form type `<form_type>`:
 - `workspace/forms/<form_type>/skills/<required_skill>/templates/*` (optional)
 - `workspace/forms/<form_type>/skills/<required_skill>/scripts/*` (optional)
 - `workspace/forms/<form_type>/skills/<required_skill>/docs/*` (optional)
+
+Loose company skills that are manually assignable under M11 do not live here. Those belong in:
+- `workspace/master_skills/<skill_name>/`
 
 ## Markdown Form Runtime Contract
 A routed form file should include YAML frontmatter like:
@@ -61,36 +62,7 @@ form_id: message-2026-03-04-001
 ## Workflow JSON Schema (Stage Graph)
 `workflow.json` is the source of truth for routing.
 
-```json
-{
-  "form_type": "example_form",
-  "version": "1.0.0",
-  "description": "What this process does.",
-  "start_stage": "DRAFT",
-  "end_stage": "ARCHIVED",
-  "stages": {
-    "DRAFT": {
-      "target": "{{initiator}}",
-      "required_skill": "draft-example-form",
-      "transitions": {
-        "submit": "REVIEW"
-      }
-    },
-    "REVIEW": {
-      "target": "Reviewer_Node",
-      "required_skill": "review-example-form",
-      "transitions": {
-        "approve": "ARCHIVED",
-        "return": "DRAFT"
-      }
-    },
-    "ARCHIVED": {
-      "target": null,
-      "is_terminal": true
-    }
-  }
-}
-```
+use `assets\workflow_template.json`
 
 ## Target Semantics
 Per stage, `target` controls next holder resolution:
@@ -110,6 +82,31 @@ Per stage, `target` controls next holder resolution:
   - `workspace/forms/<form_type>/skills/<required_skill>/SKILL.md`
 - During routing, kernel distributes next-stage skill package to participant workspaces.
 - For `{{any}}` target stages, distribute to all active agents plus resolved holder.
+
+## M11 Skill Packaging Split
+
+Treat these as two different packaging lanes:
+
+1. Form-linked stage skills
+- live under `workspace/forms/<form_type>/skills/<required_skill>/`
+- are cataloged into `master_skills` with `form_type_key=<form_type>`
+- are assigned through workflow activation/routing as `FORM_STAGE`
+- are not manually assignable through `/v1/skills/actions`
+
+2. Loose company skills
+- live under `workspace/master_skills/<skill_name>/`
+- are cataloged into `master_skills` with `form_type_key=null`
+- are lifecycle-controlled with `DRAFT | ACTIVE | DEACTIVATED`
+- are manually assignable through `/v1/skills/actions`
+
+Important naming rule:
+- `master_skills.name` is globally unique across both lanes.
+- Do not reuse the exact same skill name for a loose companion copy of a form-linked skill.
+- If you want a manual/no-approval version of a form stage skill, clone it under `workspace/master_skills/` with a distinct name.
+
+Example:
+- workflow-owned stage skill: `deploy-new-nanobot`
+- loose manually assignable companion: `deploy-new-nanobot-standalone`
 
 ## Terminal Node Options
 You can end workflows in two valid ways:
@@ -185,7 +182,27 @@ For every `required_skill` in workflow:
 - create `workspace/forms/<form_type>/skills/<required_skill>/SKILL.md`
 - add templates/scripts/docs as needed
 
-### D) Publish to kernel DB
+### D) Optional: author a loose companion skill
+Use this when a high-level manager or operator needs a direct/manual path outside the workflow approval loop.
+
+Draft a loose companion from an existing source folder:
+```bash
+bash /home/macos/omniClaw/scripts/skills/draft_master_skill.sh --apply \
+  --skill-name <distinct_loose_skill_name> \
+  --source-path /home/macos/omniClaw/workspace/forms/<form_type>/skills/<required_skill>
+```
+
+Review and activate it:
+```bash
+bash /home/macos/omniClaw/scripts/skills/list_master_skills.sh --apply
+bash /home/macos/omniClaw/scripts/skills/set_master_skill_status.sh --apply \
+  --skill-name <distinct_loose_skill_name> \
+  --lifecycle-status ACTIVE
+```
+
+Do this only when the loose copy really should be assignable outside the workflow. The workflow-owned stage skill should keep its original name and remain under `workspace/forms/...`.
+
+### E) Publish to kernel DB
 Canonical endpoint payload shape:
 ```json
 {
@@ -217,8 +234,9 @@ Activation-time checks and actions:
 - Validate static target nodes exist (by name or UUID).
 - Validate required master skills exist under `workspace/forms/<form_type>/skills/...`.
 - Distribute required stage skills to participant agent workspaces when missing.
+- Loose companion skills are not created here automatically; author and activate them separately through `scripts/skills/*`.
 
-### E) Manual lifecycle actions
+### F) Manual lifecycle actions
 Validate specific version:
 ```bash
 scripts/forms/trigger_forms_action.sh --apply \

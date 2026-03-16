@@ -18,6 +18,8 @@ Usage:
                         [--autonomy-level <int>]
                         [--linux-password <value>]
                         [--agents-source-file <path>]
+                        [--company <slug-or-display-name>] [--global-config-path <path>]
+                        [--company-workspace-root <path>]
                         [--kernel-url <url>]
 
 Default mode is dry-run. Use --apply to execute the provisioning request and write AGENTS.md.
@@ -38,6 +40,9 @@ primary_model=""
 autonomy_level="2"
 linux_password=""
 agents_source_file=""
+company="${OMNICLAW_COMPANY:-}"
+global_config_path="${OMNICLAW_GLOBAL_CONFIG_PATH:-}"
+company_workspace_root="${OMNICLAW_COMPANY_WORKSPACE_ROOT:-}"
 kernel_url="${OMNICLAW_KERNEL_URL:-http://127.0.0.1:8000}"
 
 while [[ $# -gt 0 ]]; do
@@ -98,6 +103,18 @@ while [[ $# -gt 0 ]]; do
       agents_source_file="$2"
       shift 2
       ;;
+    --company)
+      company="$2"
+      shift 2
+      ;;
+    --global-config-path)
+      global_config_path="$2"
+      shift 2
+      ;;
+    --company-workspace-root)
+      company_workspace_root="$2"
+      shift 2
+      ;;
     --kernel-url)
       kernel_url="$2"
       shift 2
@@ -126,8 +143,20 @@ if [[ -z "$manager_node_id" && -z "$manager_node_name" ]]; then
   exit 1
 fi
 
+if [[ -z "$company_workspace_root" ]]; then
+  context_cmd=(uv run --project "$ROOT" python "$ROOT/scripts/company/show_company_context.py")
+  if [[ -n "$company" ]]; then
+    context_cmd+=(--company "$company")
+  fi
+  if [[ -n "$global_config_path" ]]; then
+    context_cmd+=(--global-config-path "$global_config_path")
+  fi
+  context_cmd+=(--field workspace_root)
+  company_workspace_root="$("${context_cmd[@]}")"
+fi
+
 if [[ -z "$workspace_root" ]]; then
-  workspace_root="$ROOT/workspace/agents/$node_name/workspace"
+  workspace_root="$company_workspace_root/agents/$node_name/workspace"
 fi
 
 if [[ -z "$runtime_config_path" ]]; then
@@ -212,9 +241,21 @@ fi
   --kernel-url "$kernel_url" \
   --payload-file "$payload_file"
 
-uv run python "$ROOT/scripts/provisioning/create_workspace_tree.py" \
+create_cmd=(
+  uv run python "$ROOT/scripts/provisioning/create_workspace_tree.py"
   --apply \
   --workspace-root "$workspace_root"
+)
+if [[ -n "$company" ]]; then
+  create_cmd+=(--company "$company")
+fi
+if [[ -n "$global_config_path" ]]; then
+  create_cmd+=(--global-config-path "$global_config_path")
+fi
+if [[ -n "$company_workspace_root" ]]; then
+  create_cmd+=(--company-workspace-root "$company_workspace_root")
+fi
+"${create_cmd[@]}"
 
 init_cmd=(
   uv run python "$ROOT/scripts/provisioning/init_nanobot_config.py"
@@ -222,6 +263,15 @@ init_cmd=(
   --workspace-root "$workspace_root"
   --config-path "$runtime_config_path"
 )
+if [[ -n "$company" ]]; then
+  init_cmd+=(--company "$company")
+fi
+if [[ -n "$global_config_path" ]]; then
+  init_cmd+=(--global-config-path "$global_config_path")
+fi
+if [[ -n "$company_workspace_root" ]]; then
+  init_cmd+=(--company-workspace-root "$company_workspace_root")
+fi
 if [[ -n "$seed_config" ]]; then
   init_cmd+=(--seed-config "$seed_config")
 fi
@@ -238,6 +288,15 @@ agents_cmd=(
   --manager-name "$manager_name"
   --role-name "$role_name"
 )
+if [[ -n "$company" ]]; then
+  agents_cmd+=(--company "$company")
+fi
+if [[ -n "$global_config_path" ]]; then
+  agents_cmd+=(--global-config-path "$global_config_path")
+fi
+if [[ -n "$company_workspace_root" ]]; then
+  agents_cmd+=(--company-workspace-root "$company_workspace_root")
+fi
 if [[ -n "$primary_model" ]]; then
   agents_cmd+=(--primary-model "$primary_model")
 fi

@@ -7,14 +7,16 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from omniclaw.db.base import Base
 from omniclaw.db.enums import (
+    BudgetMode,
     FormTypeLifecycle,
     FormStatus,
     FormType,
+    MasterSkillLifecycleStatus,
     NodeStatus,
+    NodeSkillAssignmentSource,
     NodeType,
     RelationshipType,
     SkillValidationStatus,
-    BudgetMode,
 )
 
 
@@ -247,6 +249,17 @@ class MasterSkill(Base):
         nullable=False,
         default=SkillValidationStatus.DRAFT,
     )
+    lifecycle_status: Mapped[MasterSkillLifecycleStatus] = mapped_column(
+        Enum(
+            MasterSkillLifecycleStatus,
+            name="master_skill_lifecycle_status",
+            native_enum=False,
+            validate_strings=True,
+        ),
+        nullable=False,
+        default=MasterSkillLifecycleStatus.ACTIVE,
+        server_default=MasterSkillLifecycleStatus.ACTIVE.value,
+    )
     version: Mapped[str] = mapped_column(String(64), nullable=False, default="1.0.0")
     checksum: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -255,6 +268,37 @@ class MasterSkill(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+class NodeSkillAssignment(Base):
+    __tablename__ = "node_skill_assignments"
+    __table_args__ = (
+        UniqueConstraint("node_id", "skill_id", "assignment_source", name="uq_node_skill_assignments_node_skill_source"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    node_id: Mapped[str] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False)
+    skill_id: Mapped[str] = mapped_column(ForeignKey("master_skills.id", ondelete="CASCADE"), nullable=False)
+    assignment_source: Mapped[NodeSkillAssignmentSource] = mapped_column(
+        Enum(
+            NodeSkillAssignmentSource,
+            name="node_skill_assignment_source",
+            native_enum=False,
+            validate_strings=True,
+        ),
+        nullable=False,
+    )
+    assigned_by_node_id: Mapped[str | None] = mapped_column(
+        ForeignKey("nodes.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
 
 class AgentLLMCall(Base):
     __tablename__ = "agent_llm_calls"

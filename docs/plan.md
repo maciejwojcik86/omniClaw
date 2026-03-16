@@ -11,7 +11,7 @@ Guiding principles
 ## Verification Checklist (keep current)
 
 Core checks after each milestone:
-- [x] `uv run pytest -q`
+- [x] `uv run pytest -q tests`
 - [x] `openspec validate --type change <change-id> --strict`
 
 Checkpoint sweep:
@@ -35,12 +35,15 @@ Checkpoint sweep:
 | M08 | `m08-context-injector` | Context Injection | completed | M07d | engineering | Template vars render to read-only AGENTS within 5s |
 | M09 | `m09-litellm-key-management` | Budgeting | completed | M08 | engineering | Virtual keys + cost ingestion persisted per node |
 | M10 | `m10-waterfall-budget-engine` | Budgeting | completed | M09 | engineering | Hierarchical allocation enforces strict child quotas |
-| M10a | `m10a-agentic-workflow-verification-surface` | Budgeting Hardening | active | M10 | engineering | Canonical discovery, invocation, usage reporting, and budget-report workflow validates current implementation end-to-end |
-| M11 | `m11-master-skill-lifecycle` | Skills | planned | M10a | engineering | Validated skill deployment copied to agent `/skills` |
-| M12 | `m12-constitution-and-sop-pack` | Soft Domain | planned | M11 | engineering | Constitution + SOP pack integrated and usable by agents |
-| M13 | `m13-autonomous-e2e-simulation` | MVP Release Gate | planned | M12 | engineering | End-to-end worker budget request/approval loop succeeds |
-| M14 | `m14-matrix-taskforce-workspaces` | Post-MVP | planned | M13 | engineering | Temporary cross-functional workspace provisioning works |
-| M15 | `m15-cross-charge-and-internal-audit` | Post-MVP | planned | M14 | engineering | Cross-charge budget flow + audit workflow operational |
+| M10a | `m10a-agentic-workflow-verification-surface` | Budgeting Hardening | completed | M10 | engineering | Canonical discovery, invocation, usage reporting, and budget-report workflow validates current implementation end-to-end |
+| M11 | `m11-master-skill-lifecycle` | Skills | completed | M10a | engineering | Agent workspace skills are rebuilt from approved master-skill assignments |
+| M11b | `m11b-configurable-company-workspaces` | Workspace Isolation | completed | M11 | engineering | One selected company workspace root owns all company runtime assets outside the repo by default |
+| M12 | `m12-nanobot-monorepo-internalization` | Runtime Packaging | completed | M11b | engineering | Vendored Nanobot runtime, `omniclaw` CLI packaging, and prompt artifact logging work without external checkout coupling |
+| M12b | `m12b-global-company-registry` | Company Config | completed | M12 | engineering | One global OmniClaw config resolves companies by name and owns all company-wide settings |
+| M13 | `m13-constitution-and-sop-pack` | Soft Domain | planned | M12b | engineering | Constitution + SOP pack integrated and usable by agents |
+| M14 | `m14-autonomous-e2e-simulation` | MVP Release Gate | planned | M13 | engineering | End-to-end worker budget request/approval loop succeeds |
+| M15 | `m15-matrix-taskforce-workspaces` | Post-MVP | planned | M14 | engineering | Temporary cross-functional workspace provisioning works |
+| M16 | `m16-cross-charge-and-internal-audit` | Post-MVP | planned | M15 | engineering | Cross-charge budget flow + audit workflow operational |
 
 ## Phase Checklist (Gemini Scavenge)
 
@@ -222,7 +225,7 @@ Acceptance criteria:
 Implementation notes:
 - Store per-node `role_name` and `instruction_template_root` in canonical node metadata.
 - Keep source templates outside deployed workspaces under `workspace/nanobots_instructions/<node_name>/`.
-- Add kernel instruction actions and a repo-local company config file for `direct_children` vs `descendant` access control.
+- Add kernel instruction actions and company access-scope policy support for `direct_children` vs `descendant` access control; M12b later moved that policy into the global company registry.
 - Refresh all active AGENT `AGENTS.md` files at the start of each IPC scan cycle; render failures must not block form routing.
 
 ### M09 - LiteLLM key management (`m09-litellm-key-management`)
@@ -242,7 +245,7 @@ Acceptance criteria:
 - Parent-child percentage allocation enforces expected quota.
 
 Implementation notes:
-- `workspace/company_config.json` now carries `budgeting.daily_company_budget_usd`, `budgeting.root_allocator_node`, and `budgeting.reset_time_utc`.
+- Company budgeting is now sourced from `~/.omniClaw/config.json -> companies.<slug>.budgeting`, including `daily_company_budget_usd`, `root_allocator_node`, and `reset_time_utc`.
 - Canonical DB state now includes `budgets.budget_mode`, `budgets.rollover_reserve_usd`, `budgets.review_required_at`, plus `budget_allocations` and `budget_cycles`.
 - `/v1/budgets/actions` now supports `team_budget_view`, `set_team_allocations`, `set_node_budget_mode`, `run_budget_cycle`, and `recalculate_subtree` alongside cost sync actions.
 - Kernel lifespan runs a budget maintenance loop for idempotent daily cycle execution and restart catch-up.
@@ -265,7 +268,6 @@ Acceptance criteria:
 
 Implementation notes:
 - Supporting analysis and execution detail live in `docs/agentic-workflow-gap-analysis.md` and `docs/agentic-workflow-implementation-and-test-plan.md`.
-- M10a is an explicit confidence gate before `m11-master-skill-lifecycle`; do not advance until the current budget workflow is canonically validated.
 - Direct DB readers and repo-local diagnostic scripts may remain for debugging but do not count as the proof-path for completion.
 
 Verification:
@@ -273,26 +275,96 @@ Verification:
 - `openspec validate --type change m10a-agentic-workflow-verification-surface --strict`
 - canonical end-to-end budget verification runbook executed through approved endpoints/scripts
 
-Current checkpoint:
-- Implemented canonical discovery, budget-report, runtime invocation, usage/session read APIs, wrapper scripts, and mirrored verification skill.
-- Added deterministic mock-mode usage/spend persistence so the canonical proof path works in environments using approved mock runtime invocation.
+Archive status:
+- Archived as `openspec/changes/archive/2026-03-15-m10a-agentic-workflow-verification-surface`.
+- Final closure included spec sync into `openspec/specs/agentic-workflow-verification-surface/spec.md`.
 - Verified targeted tests: `uv run pytest -q tests/test_usage_actions.py tests/test_runtime_actions.py tests/test_budgets_actions.py` (`22 passed`).
 - Verified full suite: `uv run pytest -q` (`87 passed`).
 - Canonical wrapper-only E2E passed on 2026-03-11 using approved scripts only; verified usage/session evidence and budget delta for `HR_Head_01` session `cli:m10a-verify-20260311-1435`.
-- Additional follow-up hardening is now required before archive: the live usage-reporting path currently relies on customized Nanobot runtime code in an external checkout that directly imports `omniclaw.*` from `nanobot/agent/loop.py`.
-- Planned resolution direction: internalize the customized Nanobot runtime into the OmniClaw monorepo, keep automatic runtime-level usage logging, and redesign the coupling boundary so OmniClaw no longer depends on a separately maintained external Nanobot fork.
-- M10a should remain active until that coupling decision/work item is properly planned and, if kept in-scope, implemented or explicitly split into the next change.
-- Detailed planning draft for the likely follow-up change is captured in `docs/nanobot-monorepo-internalization-openspec-plan.md` (suggested change id: `m10b-nanobot-monorepo-internalization`).
+- Follow-up runtime-internalization planning remains captured in `docs/nanobot-monorepo-internalization-openspec-plan.md` for a later change if prioritized.
 
 ### M11 - Master skill lifecycle (`m11-master-skill-lifecycle`)
 Scope:
-- Skill registry model + version/checksum.
-- Validated-skill deployment daemon.
+- Shared master-skill catalog for loose company skills and form-linked stage skills.
+- Per-agent skill assignment ledger with lifecycle-controlled loose skills.
+- Scan-time workspace reconciliation that wipes stray agent-local skills and rebuilds approved copies.
+- Skills API, wrapper scripts, provisioning defaults, and deploy-stage/operator documentation.
 
 Acceptance criteria:
-- Only validated skill versions are deployed to mapped agents.
+- Agent workspace `skills/` directories contain only approved assigned skills after sync.
+- Loose company skills can be drafted, activated, deactivated, assigned, removed, and listed through supported endpoints/scripts.
+- Form-linked stage skills are cataloged and restored through the same reconciliation path without moving their source folders out of workflow packages.
 
-### M12 - Constitution and SOP pack (`m12-constitution-and-sop-pack`)
+Implementation notes:
+- Keep loose company skills under `workspace/master_skills/` and form-linked skills under `workspace/forms/<form_type>/skills/`, but catalog both in `master_skills` using canonical source paths.
+- Loose companion copies of workflow-owned skills must use distinct names because `master_skills.name` is globally unique; example: `deploy-new-nanobot-standalone` as the manual companion to the form-linked `deploy-new-nanobot`.
+- Add `node_skill_assignments` to preserve `MANUAL`, `DEFAULT`, and `FORM_STAGE` delivery sources.
+- Add `POST /v1/skills/actions` plus `scripts/skills/` wrappers as the canonical master-skill operator surface.
+- Replace the instructions-service hardcoded manager skill loop with ordinary assignment-based reconciliation.
+- Seed default loose skills from `~/.omniClaw/config.json -> companies.<slug>.skills.default_agent_skill_names`, initially `form_workflow_authoring`.
+
+Verification:
+- `PYTEST_ADDOPTS='-s' uv run pytest -q` (`94 passed`)
+- `uv run alembic current` (`20260315_0014 (head)`)
+- `openspec validate --type change m11-master-skill-lifecycle --strict`
+
+Archive status:
+- Archived as `openspec/changes/archive/2026-03-15-m11-master-skill-lifecycle`.
+- Main specs synced during archive, including creation of `openspec/specs/master-skill-lifecycle/spec.md`.
+
+### M11b - Configurable company workspaces (`m11b-configurable-company-workspaces`)
+Scope:
+- Replace the implicit repo-local company workspace with one selected company workspace root per kernel process.
+- Move company-owned runtime assets and default SQLite location under the selected company workspace.
+- Add workspace bootstrap and migration tooling so existing repo-local companies can move to external company roots safely.
+
+Acceptance criteria:
+- OmniClaw defaults company runtime state to `<user-home>/.omniClaw/workspace` when no override is provided.
+- Operators can start OmniClaw against an explicit company workspace root and database overrides; M12b later made global registry company selection the canonical operator path.
+- Kernel services and canonical scripts resolve forms, skills, templates, archives, and default agent paths from the selected company workspace instead of `<repo-root>/workspace`.
+- Separate company roots remain isolated when launched independently.
+
+Implementation notes:
+- Treat this as one company workspace per kernel process, not multi-tenant execution inside a shared process.
+- Preserve familiar subroot names where practical (`agents/`, `forms/`, `master_skills/`, `nanobots_instructions/`, `nanobot_workspace_templates/`, `form_archive/`) to reduce migration churn.
+- M12b later removed workspace-local company settings files from the runtime path; the repo-local `workspace/company_config.json` path remains migration/bootstrap input only.
+- `src/omniclaw/company_paths.py` is the shared root/subpath resolver for runtime modules and scripts.
+- `scripts/company/bootstrap_company_workspace.py` scaffolds fresh company roots; `scripts/company/migrate_repo_workspace.py` handles copy/move migration from the legacy repo-local workspace and rewrites persisted paths.
+- Local developer state has already been migrated into `/home/macos/.omniClaw/workspace`, with company settings now stored in `/home/macos/.omniClaw/config.json` and the per-company SQLite database kept inside the workspace.
+
+Verification:
+- `PYTEST_ADDOPTS='-s' uv run pytest -q tests/test_company_workspaces.py tests/test_forms_actions.py tests/test_ipc_actions.py tests/test_provisioning_actions.py tests/test_instructions_actions.py tests/test_nanobot_skill_wrappers.py` (`54 passed`)
+- `PYTEST_ADDOPTS='-s' uv run pytest -q` (`98 passed`)
+- `openspec validate --type change m11b-configurable-company-workspaces --strict`
+- `uv run python scripts/skills/audit_agent_skill_state.py --company-workspace-root /home/macos/.omniClaw/workspace`
+
+### M12b - Global company registry (`m12b-global-company-registry`)
+Scope:
+- Replace workspace-local company settings with one host-level OmniClaw registry file.
+- Resolve kernel startup by company slug or unique display name.
+- Keep company workspaces as editable assets plus per-company runtime state only.
+
+Acceptance criteria:
+- `~/.omniClaw/config.json` is the only canonical company-settings source.
+- `omniclaw --company <slug-or-display-name>` is the documented startup contract.
+- Missing workspace roots referenced by the registry fail fast during startup.
+- Existing developer state is migrated into the registry without moving the per-company SQLite DB out of the workspace.
+
+Implementation notes:
+- The global registry stores company `display_name`, `workspace_root`, `instructions`, `budgeting`, `hierarchy`, `skills`, `models`, and `runtime` settings keyed by stable slug.
+- `src/omniclaw/global_config.py` owns registry parsing/writing, while `src/omniclaw/config.py` resolves the active company into `Settings.company_settings`.
+- Budgets, instructions, skills, bootstrap/migration tooling, and runtime/provisioning helpers now read company settings from the resolved registry entry instead of a workspace-local company config file.
+- The local developer company now lives at `/home/macos/.omniClaw/config.json -> companies.omniclaw`, with `/home/macos/.omniClaw/workspace` retaining editable assets and `omniclaw.db`.
+
+Verification:
+- `openspec validate --type change m12b-global-company-registry --strict`
+- `PYTEST_ADDOPTS='-s' uv run pytest -q tests` (`101 passed in 185.58s`)
+- `env OMNICLAW_LITELLM_AUTO_START_LOCAL_PROXY=false timeout 10s uv run omniclaw --company omniclaw --host 127.0.0.1 --port 8012`
+
+Archive status:
+- Archived as `openspec/changes/archive/2026-03-16-m12b-global-company-registry`.
+
+### M13 - Constitution and SOP pack (`m13-constitution-and-sop-pack`)
 Scope:
 - Author constitution and key process SOPs.
 - Integrate SOP assets into agent context stack.
@@ -300,7 +372,7 @@ Scope:
 Acceptance criteria:
 - Agents can produce schema-valid form payloads from SOP guidance.
 
-### M13 - Autonomous E2E simulation (`m13-autonomous-e2e-simulation`)
+### M14 - Autonomous E2E simulation (`m14-autonomous-e2e-simulation`)
 Scope:
 - Director + worker scenario harness.
 - Budget exhaustion and request/approval/reallocation loop.
@@ -308,7 +380,7 @@ Scope:
 Acceptance criteria:
 - Full loop succeeds without invalid form schema or daemon crash.
 
-### Post-MVP M14-M15
+### Post-MVP M15-M16
 Scope:
 - Matrix task force workspace provisioning.
 - Cross-charge economy and independent audit workflow.
@@ -439,5 +511,6 @@ Acceptance criteria:
 - 2026-03-07: Completed active change `m08-context-injector`. Implemented the new context injector daemon to render agent instructions. Modified agent runtime tracking, provisioning service and database (added `role_name` and `instruction_template_root` metadata). Instructions are now saved to `workspace/nanobots_instructions/`, with dynamic variables like manager mapping handled automatically during the new pre-pass inside `scan_forms`. Tested via `test_provisioning_actions.py` and `test_instructions_actions.py`.
 - 2026-03-08: Completed active change `m09-litellm-key-management`. Updated `config.py` for LiteLLM master key and proxy URL; created `LiteLLMClient` to wrap `/key/generate`, `/user/info`, and `/user/update` endpoints; wired `ProvisioningService` to generate and persist `virtual_api_key` to `budgets` table and inject into agent `config.json`. Implemented `budgets_actions` endpoint for cost sync and max limit adjustments; added `manage-agent-budgets` Skill SOP. Tests pass and OpenSpec validation is strict.
 - 2026-03-08: Completed active change `m09b-usage-and-session-tracking`. Intercepted LLM usage metrics natively from `nanobot/agent/loop.py` to stream token spend and timings into `agent_llm_calls` SQLite table. Authored `POST /v1/sessions/export` to extract local JSONL conversation history to an external directory and tracked export jobs in `agent_session_exports`. Tested passing endpoints and successfully ran `openspec validate --strict`.
-- 2026-03-08: Applied runtime hardening after live budget-lookup failures: fixed the UTC reset-time comparison in `BudgetEngine.due_cycle_date`, changed `main.py` to avoid duplicate app imports and to auto-start a loopback-configured LiteLLM proxy, and taught the budget helper/manager skill docs to emit a direct `uv run python main.py` recovery path when the kernel is down.
+- 2026-03-08: Applied runtime hardening after live budget-lookup failures: fixed the UTC reset-time comparison in `BudgetEngine.due_cycle_date`, changed `main.py` to avoid duplicate app imports and to auto-start a loopback-configured LiteLLM proxy, and taught the budget helper/manager skill docs to emit a direct `uv run omniclaw` recovery path when the kernel is down.
 - 2026-03-08: Hardened live manager budget operations after reproducing Director allocation failures. `BudgetAllocationInput` now accepts alias fields used by agents/operators (`agent_name`, `node_id`, `share_percent`), the trigger helper prints kernel 4xx bodies, and budget recomputation no longer fails closed when LiteLLM `/user/update` is unavailable; those provider issues are returned in `sync_errors` while the kernel-side allocation update still succeeds.
+- 2026-03-15: Implemented active change `m12-nanobot-monorepo-internalization`. Vendored the customized Nanobot runtime into `third_party/nanobot/`, exposed the packaged `omniclaw` CLI, removed correctness-critical external checkout coupling from runtime launch, added OmniClaw-only prompt payload artifact logging, scoped root pytest to `tests/`, and validated with installer smoke plus `uv run pytest -q tests` (`101 passed`) and strict OpenSpec validation.

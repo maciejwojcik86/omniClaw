@@ -44,15 +44,15 @@ The runtime bootstrap workflow SHALL enforce M04 output boundaries for initial r
 - **THEN** artifacts are written within the agent workspace drafts boundary for this milestone
 
 ### Requirement: Kernel SHALL Support Human Supervisor Node Registration for Kernel Runner
-The kernel SHALL support registering an existing Linux user (the kernel runner) as a HUMAN node with a repo-local workspace for formal workflow participation.
+The kernel SHALL support registering an existing Linux user (the kernel runner) as a HUMAN node with a company-workspace-relative workspace for formal workflow participation.
 
 #### Scenario: Register existing kernel-running user as HUMAN node
 - **WHEN** a registration request is submitted for an existing Linux user (for example `macos`)
-- **THEN** the kernel upserts a HUMAN node with linux username, repo-local workspace path, and runtime/config metadata
+- **THEN** the kernel upserts a HUMAN node with linux username, company-workspace-relative workspace path, and runtime/config metadata
 
-#### Scenario: Human workspace uses repo-local structure
+#### Scenario: Human workspace uses selected company workspace structure
 - **WHEN** no explicit human workspace root is provided
-- **THEN** the kernel defaults workspace to `<repo-root>/workspace/<linux-username>` and scaffolds the standard workspace structure
+- **THEN** the kernel defaults workspace to `<company-workspace-root>/<linux-username>` and scaffolds the standard workspace structure
 
 ### Requirement: Agent Provisioning SHALL Enforce Single Line Management
 The kernel SHALL enforce that each AGENT node has exactly one line manager node (HUMAN or AGENT).
@@ -70,11 +70,11 @@ The kernel SHALL enforce that each AGENT node has exactly one line manager node 
 - **THEN** the hierarchy relation is created if missing and duplicate/conflicting manager links are prevented
 
 ### Requirement: App Setup SHALL Bootstrap One Human Supervisor Baseline
-At application setup, the kernel-running Linux user SHALL be registerable as a HUMAN supervisor node once, with repo-local workspace and top-agent linkage.
+At application setup, the kernel-running Linux user SHALL be registerable as a HUMAN supervisor node once, with selected company workspace paths and top-agent linkage.
 
 #### Scenario: One-time human supervisor bootstrap
 - **WHEN** setup initializes HUMAN node for kernel user (for example `macos`)
-- **THEN** node registration is idempotent and workspace scaffold exists under repo root
+- **THEN** node registration is idempotent and workspace scaffold exists under the selected company workspace root
 
 #### Scenario: Top agent linked to human supervisor
 - **WHEN** top-level AGENT (for example `Director_01`) is linked to the human supervisor
@@ -107,3 +107,18 @@ The runtime bootstrap workflow SHALL use existing Nanobot workspace context file
 - **THEN** runtime launch proceeds without creating custom seed files
 - **AND** relies on native Nanobot context files (for example `AGENTS.md`, `HEARTBEAT.md`, `SOUL.md`, `USER.md`, `TOOLS.md`)
 
+### Requirement: Runtime Bootstrap SHALL Use Installed Nanobot CLI With Explicit Integration Context
+The kernel SHALL launch Nanobot runtime commands through the installed runtime binary and SHALL provide OmniClaw-managed integration context through explicit environment variables rather than through hardcoded external source paths.
+
+#### Scenario: Kernel invokes runtime for prompt or gateway action
+- **WHEN** the runtime service launches a Nanobot prompt or gateway command
+- **THEN** it invokes the configured runtime binary command
+- **AND** it provides explicit OmniClaw runtime integration environment values for database, node identity, and runtime output roots
+
+### Requirement: Runtime Artifact Paths SHALL Expose Prompt Log Root
+The runtime service SHALL expose the prompt-log artifact root alongside other runtime artifact paths for OmniClaw-managed Nanobot executions.
+
+#### Scenario: Prompt invocation reports artifact paths
+- **WHEN** the kernel returns runtime action metadata for an agent invocation
+- **THEN** the artifact payload includes the runtime output root
+- **AND** includes the prompt-log root under that runtime output boundary

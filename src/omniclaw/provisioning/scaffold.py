@@ -4,6 +4,9 @@ from copy import deepcopy
 import json
 from pathlib import Path
 
+from omniclaw.company_paths import build_company_paths
+from omniclaw.config import load_settings
+
 REQUIRED_DIRS: tuple[str, ...] = (
     "inbox/new",
     "inbox/read",
@@ -20,7 +23,7 @@ REQUIRED_DIRS: tuple[str, ...] = (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-TEMPLATE_ROOT = REPO_ROOT / "workspace" / "nanobot_workspace_templates"
+SEED_TEMPLATE_ROOT = REPO_ROOT / "workspace" / "nanobot_workspace_templates"
 
 REQUIRED_FILE_TEMPLATES: dict[str, str] = {
     "notes/DECISIONS.md": "notes/DECISIONS.md",
@@ -36,25 +39,33 @@ REQUIRED_FILE_TEMPLATES: dict[str, str] = {
 }
 
 
-def _load_template_text(relative_path: str) -> str:
-    return (TEMPLATE_ROOT / relative_path).read_text(encoding="utf-8")
+def _resolve_template_root(template_root: Path | None) -> Path:
+    if template_root is not None:
+        resolved = template_root.expanduser().resolve()
+        if resolved.exists():
+            return resolved
+    settings = load_settings()
+    company_template_root = build_company_paths(settings).workspace_templates_root
+    if company_template_root.exists():
+        return company_template_root
+    return SEED_TEMPLATE_ROOT
 
 
-def _load_template_json(relative_path: str) -> dict[str, object]:
-    payload = json.loads((TEMPLATE_ROOT / relative_path).read_text(encoding="utf-8"))
+def _load_template_text(relative_path: str, *, template_root: Path | None = None) -> str:
+    return (_resolve_template_root(template_root) / relative_path).read_text(encoding="utf-8")
+
+
+def _load_template_json(relative_path: str, *, template_root: Path | None = None) -> dict[str, object]:
+    payload = json.loads((_resolve_template_root(template_root) / relative_path).read_text(encoding="utf-8"))
     return payload if isinstance(payload, dict) else {}
 
 
-REQUIRED_FILES: dict[str, str] = {
-    relative_file: _load_template_text(template_relative)
-    for relative_file, template_relative in REQUIRED_FILE_TEMPLATES.items()
-}
-
-
-NANOBOT_CONFIG_TEMPLATE: dict[str, object] = _load_template_json("config.json")
-
-
-def ensure_workspace_tree(*, workspace_root: Path, apply: bool) -> dict[str, tuple[str, ...]]:
+def ensure_workspace_tree(
+    *,
+    workspace_root: Path,
+    apply: bool,
+    template_root: Path | None = None,
+) -> dict[str, tuple[str, ...]]:
     root = workspace_root.expanduser().resolve()
 
     created_dirs: list[str] = []
@@ -86,7 +97,10 @@ def ensure_workspace_tree(*, workspace_root: Path, apply: bool) -> dict[str, tup
             created_files.append(str(target))
             if apply:
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(_load_template_text(template_relative), encoding="utf-8")
+                target.write_text(
+                    _load_template_text(template_relative, template_root=template_root),
+                    encoding="utf-8",
+                )
 
     return {
         "created_dirs": tuple(created_dirs),
@@ -107,6 +121,7 @@ def ensure_nanobot_config(
     seed_config: dict[str, object] | None = None,
     litellm_api_base: str | None = None,
     litellm_api_key: str | None = None,
+    template_root: Path | None = None,
 ) -> dict[str, object]:
     resolved_config = config_path.expanduser().resolve()
     resolved_workspace = workspace_root.expanduser().resolve()
@@ -120,7 +135,7 @@ def ensure_nanobot_config(
     else:
         config_data = {}
 
-    merged = deepcopy(NANOBOT_CONFIG_TEMPLATE)
+    merged = deepcopy(_load_template_json("config.json", template_root=template_root))
     _deep_merge_dicts(merged, config_data)
     if seed_config:
         _deep_merge_dicts(merged, deepcopy(seed_config))

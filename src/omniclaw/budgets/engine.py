@@ -1,15 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from decimal import Decimal, ROUND_HALF_UP
-import json
-from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
 
-from omniclaw.config import Settings
+from omniclaw.config import Settings, load_effective_company_settings
 from omniclaw.db.enums import BudgetMode, NodeType
 from omniclaw.db.models import Budget, Node
 from omniclaw.db.repository import KernelRepository
@@ -17,10 +16,6 @@ from omniclaw.litellm_client import LiteLLMClient
 
 
 _CENT = Decimal("0.000001")
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
 
 
 def _quantize(value: Decimal | float | int) -> Decimal:
@@ -61,18 +56,11 @@ class BudgetEngine:
     def __init__(self, *, repository: KernelRepository, settings: Settings):
         self._repository = repository
         self._settings = settings
-        self._company_config_path = self._resolve_company_config_path(settings)
 
     def load_company_budget_config(self) -> CompanyBudgetConfig:
-        try:
-            payload = json.loads(self._company_config_path.read_text(encoding="utf-8"))
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=503, detail="Company config file is missing") from exc
-        except (OSError, json.JSONDecodeError) as exc:
-            raise HTTPException(status_code=503, detail="Company config file is unreadable") from exc
-
+        payload = load_effective_company_settings(self._settings)
         raw_budgeting = payload.get("budgeting")
-        if not isinstance(raw_budgeting, dict):
+        if not isinstance(raw_budgeting, Mapping):
             raise HTTPException(status_code=503, detail="Company budgeting config is missing")
 
         raw_daily_budget = raw_budgeting.get("daily_company_budget_usd")
@@ -557,9 +545,3 @@ class BudgetEngine:
             return time(hour=int(hour_str), minute=int(minute_str))
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=503, detail="Invalid reset_time_utc in company config") from exc
-
-    @staticmethod
-    def _resolve_company_config_path(settings: Settings) -> Path:
-        if settings.company_config_path:
-            return Path(settings.company_config_path).expanduser().resolve()
-        return _repo_root() / "workspace" / "company_config.json"

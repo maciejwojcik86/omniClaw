@@ -180,7 +180,7 @@ fi
 
 if ! curl --silent --fail "$health_url" >/dev/null 2>&1; then
   echo "OmniClaw kernel is not reachable at $health_url." >&2
-  echo "Start it with: uv run python main.py" >&2
+  echo "Start it with: uv run omniclaw" >&2
   exit 7
 fi
 

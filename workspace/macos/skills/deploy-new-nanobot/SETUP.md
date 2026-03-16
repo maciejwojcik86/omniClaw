@@ -1,6 +1,6 @@
 # Setup: Deploy New Nanobot Skill
 
-This file covers first-time setup for the Nanobot deploy scripts and the optional packaging path for your local Nanobot fork.
+This file covers first-time setup for the Nanobot deploy scripts and the optional packaging path for the vendored monorepo Nanobot fork.
 
 ## 1) Nanobot CLI prerequisite
 
@@ -28,11 +28,11 @@ Official install:
 uv tool install nanobot-ai
 ```
 
-Local fork path (recommended when you need the `/home/macos/nanobot/` customizations):
+Vendored monorepo fork path (recommended when you need the OmniClaw-specific Nanobot customizations):
 
 ```bash
 cd /home/macos/omniClaw
-workspace/forms/deploy_new_agent/skills/deploy-new-nanobot/scripts/package_nanobot_source.sh --apply --source-dir /home/macos/nanobot --output-dir /home/macos/omniClaw/workspace/runtime_packages
+workspace/forms/deploy_new_agent/skills/deploy-new-nanobot/scripts/package_nanobot_source.sh --apply --source-dir /home/macos/omniClaw/third_party/nanobot --output-dir /home/macos/omniClaw/workspace/runtime_packages
 ```
 
 On another machine:
@@ -56,7 +56,7 @@ If the selected provider uses API keys instead, add them to the deployed `config
 
 ```bash
 cd /home/macos/omniClaw
-uv run python main.py
+uv run omniclaw
 ```
 
 ## 5) Human workspace baseline inside repo
@@ -81,5 +81,5 @@ Then register that user as a HUMAN node with the provisioning endpoint action `r
 ## 7) Setup-time troubleshooting
 
 - If `nanobot` is missing from `PATH`, install it before using this skill.
-- If the packaged fork is required on another host, install from the archived local source instead of PyPI.
+- If the packaged fork is required on another host, install from the archived vendored source instead of PyPI.
 - For runtime/provider failures, follow [TROUBLESHOOTING.md](./TROUBLESHOOTING.md).

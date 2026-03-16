@@ -1,6 +1,5 @@
-from omniclaw.app import create_app
-from omniclaw.config import load_settings
+from omniclaw.cli import main
 
 
-app = create_app(load_settings())
-
+if __name__ == "__main__":
+    main()

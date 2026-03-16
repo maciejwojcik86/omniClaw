@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import json
 from pathlib import Path
 import re
 import shutil
@@ -10,11 +9,13 @@ from typing import Any
 from fastapi import HTTPException
 
 from omniclaw.budgets.engine import BudgetEngine
-from omniclaw.config import Settings, load_settings
+from omniclaw.company_paths import CompanyPaths, build_company_paths
+from omniclaw.config import Settings, load_effective_company_settings, load_settings
 from omniclaw.db.enums import NodeType
 from omniclaw.db.models import Node
 from omniclaw.db.repository import KernelRepository
 from omniclaw.instructions.schemas import InstructionsActionRequest
+from omniclaw.skills.service import SkillsService
 
 
 _PLACEHOLDER_PATTERN = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s*\}\}")
@@ -45,7 +46,12 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def derive_instruction_template_root(*, node_name: str, workspace_root: str | None) -> Path:
+def derive_instruction_template_root(
+    *,
+    node_name: str,
+    workspace_root: str | None,
+    company_paths: CompanyPaths | None = None,
+) -> Path:
     if workspace_root:
         resolved_workspace = Path(workspace_root).expanduser().resolve()
         if (
@@ -54,7 +60,8 @@ def derive_instruction_template_root(*, node_name: str, workspace_root: str | No
             and resolved_workspace.parent.parent.name == "agents"
         ):
             return resolved_workspace.parents[2] / "nanobots_instructions" / node_name
-    return _repo_root() / "workspace" / "nanobots_instructions" / node_name
+    resolved_paths = company_paths or build_company_paths(load_settings())
+    return resolved_paths.instruction_templates_root / node_name
 
 
 class InstructionsService:
@@ -66,17 +73,17 @@ class InstructionsService:
         *,
         repository: KernelRepository,
         settings: Settings | None = None,
+        skills_service: SkillsService | None = None,
     ) -> None:
         self._repository = repository
         self._settings = settings or load_settings()
+        self._company_paths: CompanyPaths = build_company_paths(self._settings)
         self._budget_engine = BudgetEngine(repository=repository, settings=self._settings)
+        self._skills_service = skills_service or SkillsService(repository=repository, settings=self._settings)
         self._repo_root = _repo_root()
-        self._default_template_path = self._repo_root / "workspace" / "nanobot_workspace_templates" / "AGENTS.md"
-        if self._settings.company_config_path:
-            self._company_config_path = Path(self._settings.company_config_path).expanduser().resolve()
-        else:
-            self._company_config_path = self._repo_root / "workspace" / "company_config.json"
-        self._master_skill_dir = self._repo_root / "workspace" / "master_skills" / self.MANAGER_SKILL_NAME
+        self._default_template_path = self._company_paths.workspace_templates_root / "AGENTS.md"
+        if not self._default_template_path.exists():
+            self._default_template_path = self._repo_root / "workspace" / "nanobot_workspace_templates" / "AGENTS.md"
 
     def execute(self, request: InstructionsActionRequest) -> dict[str, object]:
         if request.action == "list_accessible_targets":
@@ -165,7 +172,7 @@ class InstructionsService:
         return self._sync_node(target)
 
     def sync_all_active_agents(self) -> dict[str, object]:
-        skill_distribution = self.sync_manager_skill_distribution()
+        skill_sync = self._skills_service.sync_all_active_agents()
         items: list[dict[str, object]] = []
         rendered = 0
         failed = 0
@@ -186,89 +193,13 @@ class InstructionsService:
                 "rendered": rendered,
                 "failed": failed,
             },
-            "skill_distribution": skill_distribution,
+            "skill_distribution": skill_sync.get("manager_policy_assignments", {}),
+            "skill_sync": skill_sync,
             "items": items,
         }
 
     def sync_manager_skill_distribution(self) -> dict[str, object]:
-        installed = 0
-        removed = 0
-        items: list[dict[str, object]] = []
-        skills: list[dict[str, object]] = []
-        missing_sources: list[str] = []
-        descriptions = {
-            "manage-agent-instructions": "Kernel-backed manager workflow for reading and updating subordinate AGENTS templates.",
-            "manage-team-budgets": "Kernel-backed manager workflow for reviewing and updating direct-report budgets.",
-        }
-
-        for skill_name in self.MANAGER_SKILL_NAMES:
-            source_dir = self._repo_root / "workspace" / "master_skills" / skill_name
-            if not source_dir.exists():
-                missing_sources.append(skill_name)
-                skills.append({"skill_name": skill_name, "status": "missing_source"})
-                continue
-
-            self._repository.upsert_master_skill(
-                name=skill_name,
-                form_type_key=None,
-                master_path=str(source_dir.resolve()),
-                description=descriptions.get(skill_name),
-                version="1.0.0",
-            )
-
-            skill_installed = 0
-            skill_removed = 0
-            for node in self._repository.list_nodes_with_workspaces():
-                workspace_root = self._resolve_workspace_root(node)
-                if workspace_root is None:
-                    continue
-                target_dir = workspace_root / "skills" / skill_name
-                has_subordinates = bool(self._repository.list_children(parent_node_id=node.id))
-                if has_subordinates:
-                    self._copy_skill_tree(source=source_dir, target=target_dir)
-                    installed += 1
-                    skill_installed += 1
-                    items.append(
-                        {
-                            "node": node.name,
-                            "skill_name": skill_name,
-                            "status": "installed",
-                            "path": str(target_dir.resolve()),
-                        }
-                    )
-                elif target_dir.exists():
-                    if target_dir.is_dir():
-                        shutil.rmtree(target_dir)
-                    else:
-                        target_dir.unlink()
-                    removed += 1
-                    skill_removed += 1
-                    items.append(
-                        {
-                            "node": node.name,
-                            "skill_name": skill_name,
-                            "status": "removed",
-                            "path": str(target_dir.resolve()),
-                        }
-                    )
-            skills.append(
-                {
-                    "skill_name": skill_name,
-                    "status": "ok",
-                    "installed": skill_installed,
-                    "removed": skill_removed,
-                }
-            )
-
-        return {
-            "skill_name": self.MANAGER_SKILL_NAME,
-            "status": "missing_source" if missing_sources else "ok",
-            "installed": installed,
-            "removed": removed,
-            "missing_sources": missing_sources,
-            "skills": skills,
-            "items": items,
-        }
+        return self._skills_service.sync_manager_policy_assignments()
 
     def _single_sync_response(self, *, target: Node) -> dict[str, object]:
         target = self._ensure_node_instruction_state(target)
@@ -338,12 +269,7 @@ class InstructionsService:
 
     def _access_scope(self) -> str:
         default_scope = _DEFAULT_ACCESS_SCOPE
-        try:
-            payload = json.loads(self._company_config_path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, OSError, json.JSONDecodeError):
-            return default_scope
-        if not isinstance(payload, dict):
-            return default_scope
+        payload = load_effective_company_settings(self._settings)
         instructions = payload.get("instructions")
         if not isinstance(instructions, dict):
             return default_scope
@@ -363,7 +289,11 @@ class InstructionsService:
                 updates["role_name"] = inferred_role
         if not node.instruction_template_root:
             updates["instruction_template_root"] = str(
-                derive_instruction_template_root(node_name=node.name, workspace_root=node.workspace_root).resolve()
+                derive_instruction_template_root(
+                    node_name=node.name,
+                    workspace_root=node.workspace_root,
+                    company_paths=self._company_paths,
+                ).resolve()
             )
 
         if updates:

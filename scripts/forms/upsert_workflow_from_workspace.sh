@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
 usage() {
   cat <<'USAGE'
 Usage:
   upsert_workflow_from_workspace.sh [--apply] [--activate]
                                   [--form-type <type_key>]
                                   [--workflow-file <path>]
+                                  [--company <slug-or-display-name>] [--global-config-path <path>]
+                                  [--company-workspace-root <path>]
                                   [--version <ver>]
                                   [--kernel-url <url>]
 
@@ -18,6 +22,9 @@ USAGE
 dry_run=1
 activate=0
 kernel_url="${OMNICLAW_KERNEL_URL:-http://127.0.0.1:8000}"
+company="${OMNICLAW_COMPANY:-}"
+global_config_path="${OMNICLAW_GLOBAL_CONFIG_PATH:-}"
+company_workspace_root="${OMNICLAW_COMPANY_WORKSPACE_ROOT:-}"
 form_type=""
 workflow_file=""
 version_override=""
@@ -36,12 +43,24 @@ while [[ $# -gt 0 ]]; do
       kernel_url="$2"
       shift 2
       ;;
+    --company)
+      company="$2"
+      shift 2
+      ;;
+    --global-config-path)
+      global_config_path="$2"
+      shift 2
+      ;;
     --form-type)
       form_type="$2"
       shift 2
       ;;
     --workflow-file)
       workflow_file="$2"
+      shift 2
+      ;;
+    --company-workspace-root)
+      company_workspace_root="$2"
       shift 2
       ;;
     --version)
@@ -70,8 +89,20 @@ if [[ -z "$form_type" && -z "$workflow_file" ]]; then
   exit 1
 fi
 
+if [[ -z "$company_workspace_root" ]]; then
+  context_cmd=(uv run --project "$ROOT" python "$ROOT/scripts/company/show_company_context.py")
+  if [[ -n "$company" ]]; then
+    context_cmd+=(--company "$company")
+  fi
+  if [[ -n "$global_config_path" ]]; then
+    context_cmd+=(--global-config-path "$global_config_path")
+  fi
+  context_cmd+=(--field workspace_root)
+  company_workspace_root="$("${context_cmd[@]}")"
+fi
+
 if [[ -n "$form_type" && -z "$workflow_file" ]]; then
-  workflow_file="workspace/forms/${form_type}/workflow.json"
+  workflow_file="${company_workspace_root}/forms/${form_type}/workflow.json"
 fi
 
 if [[ ! -f "$workflow_file" ]]; then
@@ -121,20 +152,20 @@ if [[ "$dry_run" -eq 1 ]]; then
   exit 0
 fi
 
-scripts/forms/trigger_forms_action.sh \
+"$ROOT/scripts/forms/trigger_forms_action.sh" \
   --apply \
   --kernel-url "$kernel_url" \
   --body-file "$payload_file"
 
 if [[ "$activate" -eq 1 ]]; then
-  scripts/forms/trigger_forms_action.sh \
+  "$ROOT/scripts/forms/trigger_forms_action.sh" \
     --apply \
     --kernel-url "$kernel_url" \
     --action validate_form_type \
     --type-key "$form_type" \
     --version "$version"
 
-  scripts/forms/trigger_forms_action.sh \
+  "$ROOT/scripts/forms/trigger_forms_action.sh" \
     --apply \
     --kernel-url "$kernel_url" \
     --action activate_form_type \

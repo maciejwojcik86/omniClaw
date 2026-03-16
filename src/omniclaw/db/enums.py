@@ -48,6 +48,18 @@ class SkillValidationStatus(str, Enum):
     DEPRECATED = "DEPRECATED"
 
 
+class MasterSkillLifecycleStatus(str, Enum):
+    DRAFT = "DRAFT"
+    ACTIVE = "ACTIVE"
+    DEACTIVATED = "DEACTIVATED"
+
+
+class NodeSkillAssignmentSource(str, Enum):
+    MANUAL = "MANUAL"
+    DEFAULT = "DEFAULT"
+    FORM_STAGE = "FORM_STAGE"
+
+
 class FormTypeLifecycle(str, Enum):
     DRAFT = "DRAFT"
     VALIDATED = "VALIDATED"

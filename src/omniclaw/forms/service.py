@@ -9,10 +9,13 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from omniclaw.company_paths import CompanyPaths, build_company_paths, repo_workspace_root
+from omniclaw.config import Settings, load_settings
 from omniclaw.db.enums import FormStatus, FormTypeLifecycle, NodeStatus
 from omniclaw.db.models import FormLedger, FormTypeDefinition, Node
 from omniclaw.db.repository import KernelRepository, TransitionConflictError
 from omniclaw.forms.schemas import FormsActionRequest
+from omniclaw.skills.service import SkillsService
 
 
 class FormsService:
@@ -26,8 +29,17 @@ class FormsService:
         r"[0-9a-fA-F]{12}$"
     )
 
-    def __init__(self, *, repository: KernelRepository) -> None:
+    def __init__(
+        self,
+        *,
+        repository: KernelRepository,
+        settings: Settings | None = None,
+        skills_service: SkillsService | None = None,
+    ) -> None:
         self._repository = repository
+        self._settings = settings or load_settings()
+        self._company_paths: CompanyPaths = build_company_paths(self._settings)
+        self._skills_service = skills_service or SkillsService(repository=repository, settings=self._settings)
 
     def execute(self, request: FormsActionRequest) -> dict[str, object]:
         if request.action == "upsert_form_type":
@@ -218,6 +230,48 @@ class FormsService:
             },
             "removed": sorted(removed),
             "preserved": sorted(preserved),
+            "items": items,
+        }
+
+    def refresh_active_form_skill_assignments(self) -> dict[str, object]:
+        items: list[dict[str, object]] = []
+        refreshed = 0
+        failed = 0
+        for definition in self._repository.list_form_type_definitions():
+            if definition.lifecycle_state != FormTypeLifecycle.ACTIVE:
+                continue
+            graph = self._decode_json(definition.workflow_graph)
+            if not self._is_stage_graph(graph):
+                continue
+            errors = self._ensure_stage_graph_skill_distribution(
+                type_key=definition.type_key,
+                workflow_graph=graph,
+            )
+            if errors:
+                failed += 1
+                items.append(
+                    {
+                        "type_key": definition.type_key,
+                        "version": definition.version,
+                        "status": "failed",
+                        "errors": errors,
+                    }
+                )
+                continue
+            refreshed += 1
+            items.append(
+                {
+                    "type_key": definition.type_key,
+                    "version": definition.version,
+                    "status": "ok",
+                }
+            )
+        return {
+            "action": "refresh_active_form_skill_assignments",
+            "summary": {
+                "refreshed": refreshed,
+                "failed": failed,
+            },
             "items": items,
         }
 
@@ -1322,6 +1376,8 @@ class FormsService:
             return ["workflow_graph.stages must be a non-empty object"]
 
         errors: list[str] = []
+        pending_assignments: list[tuple[str, str]] = []
+        affected_nodes: dict[str, Node] = {}
         active_agent_nodes = self._repository.list_active_agent_nodes_with_workspaces()
         active_workspace_nodes = [
             node
@@ -1358,7 +1414,7 @@ class FormsService:
                 skill_name=required_skill,
             )
             try:
-                self._repository.upsert_master_skill(
+                skill_row = self._repository.upsert_master_skill(
                     name=skill_manifest_defaults["name"],
                     form_type_key=type_key,
                     master_path=str(skill_source_dir.resolve()),
@@ -1383,14 +1439,23 @@ class FormsService:
                 continue
 
             for node in target_nodes:
-                distribution_error = self._copy_skill_to_node(
-                    node=node,
-                    skill_name=required_skill,
-                    skill_source_dir=skill_source_dir,
-                    manifest_defaults=skill_manifest_defaults,
+                pending_assignments.append((node.id, skill_row.id))
+                affected_nodes[node.id] = node
+        if errors:
+            return errors
+        try:
+            self._repository.replace_form_skill_assignments(
+                form_type_key=type_key,
+                assignments=pending_assignments,
+            )
+        except ValueError as exc:
+            return [str(exc)]
+        for node in affected_nodes.values():
+            sync_result = self._skills_service.sync_node_skills(node=node)
+            if sync_result["status"] != "synced":
+                errors.append(
+                    f"failed syncing approved skills for node '{node.name}': {sync_result.get('error', 'unknown error')}"
                 )
-                if distribution_error is not None:
-                    errors.append(distribution_error)
         return errors
 
     def _resolve_stage_distribution_nodes(
@@ -1854,10 +1919,13 @@ class FormsService:
         }
 
     def _workspace_root(self) -> Path:
-        return Path(__file__).resolve().parents[3] / "workspace"
+        return self._company_paths.root
 
     def _workspace_forms_root(self) -> Path:
-        return self._workspace_root() / "forms"
+        forms_root = self._workspace_root() / "forms"
+        if not forms_root.exists():
+            return repo_workspace_root() / "forms"
+        return forms_root
 
     def _workspace_form_skills_root(self, *, type_key: str) -> Path:
         return self._workspace_forms_root() / type_key / "skills"

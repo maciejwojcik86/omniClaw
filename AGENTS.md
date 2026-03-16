@@ -1,7 +1,7 @@
 # OmniClaw Engineering Instructions
 
 ## Project Mission
-OmniClaw builds a kernel that orchestrates repo-local Nanobot agents using formal Markdown/YAML forms, canonical database state, strict budget controls, and managed skill distribution.
+OmniClaw builds a kernel that orchestrates Nanobot agents from one selected company workspace using formal Markdown/YAML forms, canonical database state, strict budget controls, and managed skill distribution.
 
 ## Skill-First Development Paradigm (Mandatory)
 - Prefer modular, single-responsibility implementation steps over monolithic A-to-Z scripts.
@@ -9,7 +9,7 @@ OmniClaw builds a kernel that orchestrates repo-local Nanobot agents using forma
 ## Skill Namespace Distinction And Mirroring Contract (Mandatory)
 - There are two distinct skill families in this repo and they must not be conflated:
   - Developer/copilot skills live in `.codex/skills/` and mirrored `skills/`. These are for repo development by Codex CLI and nanobot itself. They should explain this repository, capture reusable development procedures, and serve as implementation/verification notes for continuing project work.
-  - OmniClaw company/runtime skills live under workspace-managed locations such as `workspace/master_skills/` and `workspace/forms/<form_type>/skills/`. These are product/runtime artifacts intended for deployed OmniClaw agents and form workflows.
+  - OmniClaw company/runtime skills live under the selected company workspace, for example `<company-workspace-root>/master_skills/` and `<company-workspace-root>/forms/<form_type>/skills/`. These are product/runtime artifacts intended for deployed OmniClaw agents and form workflows.
 - Developer/copilot skill updates are mandatory closure work for implementation slices.
 - Whenever a developer/copilot skill is created or updated in `.codex/skills/<skill-name>/`, mirror the same contents into `skills/<skill-name>/` in the same change so both toolchains read the same SOP.
 - Do not treat workspace/company/form skills as substitutes for developer/copilot skills, and do not store developer workflow notes only inside workspace-managed skill locations.
@@ -18,7 +18,7 @@ OmniClaw builds a kernel that orchestrates repo-local Nanobot agents using forma
   - Workspace scaffold creation
   - Ownership/group permission policy
 - Use `$deploy-new-nanobot` as the default unified provisioning skill (workflow + setup + audit).
-- Use `/home/macos/.nanobot/`, `/home/macos/nanobot/`, and the Nanobot deployment assets as the runtime/config reference baseline.
+- Use `/home/macos/.nanobot/`, `third_party/nanobot/`, and the Nanobot deployment assets as the runtime/config reference baseline.
 - Use `$runtime-gateway-control` for delegated gateway on/off/status endpoint workflows.
 - Use `$alembic-migration-ops` when changing schema or verifying migration success.
 - Every proven implementation pattern MUST be captured as a reusable developer/copilot skill under `.codex/skills/<skill-name>/SKILL.md` and mirrored to `skills/<skill-name>/SKILL.md`.
@@ -139,31 +139,41 @@ Top-level map (update as project evolves):
 - `alembic/`: migration environment and versioned schema migration scripts.
 - `alembic.ini`: Alembic runtime configuration.
 - `src/omniclaw/`: kernel Python package (app factory, config, logging, runtime modules).
+- `src/omniclaw/company_paths.py`: shared resolver for selected company workspace roots and canonical subpaths.
+- `src/omniclaw/runtime_integration/`: optional OmniClaw-owned runtime hook used by vendored Nanobot for usage persistence.
 - `src/omniclaw/budgets/`: waterfall budget engine, budget actions/service, and LiteLLM cap reconciliation.
-- `src/omniclaw/instructions/`: AGENTS template management, rendering, and manager skill distribution.
+- `src/omniclaw/instructions/`: AGENTS template management, rendering, and manager-skill policy delegation.
 - `src/omniclaw/ipc/`: file IPC router schemas/service for generic form scan/routing (`scan_forms`, `scan_messages` alias).
 - `src/omniclaw/forms/`: form-type registry actions and graph-based state-machine decision service.
+- `src/omniclaw/skills/`: master-skill catalog lifecycle, node assignment, and workspace reconciliation service.
 - `src/omniclaw/usage/`: LLM usage/session export persistence and API service.
 - `tests/`: automated verification for API/runtime behavior.
 - `.codex/skills/`: developer/copilot skills for Codex CLI; must mirror `skills/`.
 - `skills/`: developer/copilot skills for nanobot runtime; must mirror `.codex/skills/`.
 - `scripts/budgets/`: helper scripts for budget action triggers and manager budget operations.
+- `scripts/company/`: company workspace bootstrap and repo-workspace migration helpers.
+- `scripts/company/show_company_context.py`: registry-backed company path/context resolver used by operator scripts.
+- `scripts/install/`: monorepo bootstrap helper for shared `omniclaw` + `nanobot` package installation.
 - `scripts/provisioning/`: helper scripts used by provisioning-related skills and manual verification.
 - `scripts/runtime/`: helper scripts for runtime gateway action triggers and smoke checks.
 - `scripts/ipc/`: helper scripts for IPC router action triggers and form-routing checks.
 - `scripts/forms/`: helper scripts for form-type administration, workspace workflow publication, and smoke checks.
-- `workspace/`: repo-local supervisor/agent workspaces plus company-level form/skill artifacts.
-  - `workspace/company_config.json`: company-level instructions and budgeting config.
-  - `workspace/agents/`: deployed Nanobot agent directories (`<agent_name>/config.json` plus nested `workspace/`).
-  - `workspace/forms/`: approved canonical form workflow packages (`<form_type>/workflow.json`).
-  - `workspace/forms/<form_type>/skills/`: per-form stage skill master copies (`<required_skill>/...`).
-  - `workspace/master_skills/`: approved master skills for company behavior bootstrapping.
-  - `workspace/nanobot_workspace_templates/`: canonical deployed Nanobot workspace template source.
-  - `workspace/nanobots_instructions/`: repo-local external instruction templates per node.
-  - `workspace/form_archive/`: archived routed-form copies grouped by form type/id.
+- `scripts/skills/`: helper scripts for master-skill catalog, assignment, and reconciliation actions.
+- `workspace/`: repo-local seed/migration source for company assets; the canonical runtime company root defaults to `<user-home>/.omniClaw/workspace`.
+  - `workspace/company_config.json`: legacy seed company settings consumed only as migration/bootstrap input for `~/.omniClaw/config.json`.
+  - `workspace/company_models.yaml`: legacy seed model catalog consumed only as migration/bootstrap input for `~/.omniClaw/config.json`.
+  - `workspace/agents/`: legacy repo-local agent examples and migration input.
+  - `workspace/forms/`: seed canonical form workflow packages (`<form_type>/workflow.json`).
+  - `workspace/forms/<form_type>/skills/`: seed per-form stage skill master copies (`<required_skill>/...`).
+  - `workspace/master_skills/`: seed loose company master skills for workspace bootstrap/migration.
+  - `workspace/nanobot_workspace_templates/`: seed deployed Nanobot workspace template source.
+  - `workspace/nanobots_instructions/`: seed external instruction templates per node.
+  - `workspace/form_archive/`: seed archive examples and migration input.
 - `main.py`: temporary bootstrap entrypoint.
 - `pyproject.toml`: Python project metadata.
+- `third_party/nanobot/`: vendored Nanobot runtime package source kept under monorepo ownership.
 - `uv.lock`: resolved dependency lockfile for reproducible `uv` runs.
+- `~/.omniClaw/config.json`: host-level OmniClaw company registry and source of truth for company settings.
 - `README.md`: repository overview (to be expanded).
 
 ## Repository Map Maintenance Rules

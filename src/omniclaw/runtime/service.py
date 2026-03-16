@@ -15,6 +15,16 @@ from omniclaw.config import Settings
 from omniclaw.db.models import Node
 from omniclaw.db.repository import KernelRepository
 from omniclaw.runtime.schemas import RuntimeActionRequest
+from omniclaw.runtime_integration import (
+    DEFAULT_RUNTIME_INTEGRATION_FACTORY,
+    RUNTIME_CALL_SOURCE_ENV,
+    RUNTIME_DATABASE_URL_ENV,
+    RUNTIME_INTEGRATION_FACTORY_ENV,
+    RUNTIME_NODE_ID_ENV,
+    RUNTIME_NODE_NAME_ENV,
+    RUNTIME_OUTPUT_ROOT_ENV,
+    RUNTIME_PROMPT_LOG_ROOT_ENV,
+)
 
 
 class RuntimeService:
@@ -110,7 +120,10 @@ class RuntimeService:
             gateway_command=gateway_command,
             artifact_paths=artifact_paths,
         )
-        process = self._run_runtime_script(script=script)
+        process = self._run_runtime_script(
+            script=script,
+            env_overrides=self._build_runtime_integration_env(node=node, artifact_paths=artifact_paths),
+        )
         finished_at = datetime.now(timezone.utc)
 
         if process.returncode not in {0, 10}:
@@ -398,7 +411,10 @@ class RuntimeService:
             }
 
         script = self._build_agent_invoke_script(command=command, artifact_paths=artifact_paths)
-        process = self._run_runtime_script(script=script)
+        process = self._run_runtime_script(
+            script=script,
+            env_overrides=self._build_runtime_integration_env(node=node, artifact_paths=artifact_paths),
+        )
         finished_at = datetime.now(timezone.utc)
         metadata_path = self._write_run_metadata(
             workspace_root=workspace_root,
@@ -474,6 +490,7 @@ class RuntimeService:
             "output_root": str(artifact_root),
             "gateway_pid_file": str(artifact_root / "gateway.pid"),
             "gateway_log_file": str(artifact_root / "gateway.log"),
+            "prompt_logs_root": str((artifact_root / "prompt_logs").resolve()),
         }
 
     def _build_gateway_command_args(
@@ -487,6 +504,7 @@ class RuntimeService:
         template = self._settings.runtime_gateway_command_template
         try:
             rendered = template.format(
+                runtime_bin=self._settings.runtime_command_bin,
                 host=host,
                 port=port,
                 workspace_root=str(workspace_root),
@@ -515,7 +533,7 @@ class RuntimeService:
         include_logs: bool,
     ) -> list[str]:
         return [
-            "nanobot",
+            self._settings.runtime_command_bin,
             "agent",
             "--message",
             prompt,
@@ -617,7 +635,12 @@ class RuntimeService:
             "echo \"stopped\"\n"
         )
 
-    def _run_runtime_script(self, *, script: str) -> subprocess.CompletedProcess[str]:
+    def _run_runtime_script(
+        self,
+        *,
+        script: str,
+        env_overrides: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         try:
             return subprocess.run(
                 ["bash", "-lc", script],
@@ -625,7 +648,7 @@ class RuntimeService:
                 text=True,
                 check=False,
                 timeout=self._settings.runtime_command_timeout_seconds,
-                env=self._build_runtime_env(),
+                env=self._build_runtime_env(env_overrides=env_overrides),
             )
         except subprocess.TimeoutExpired as exc:
             raise HTTPException(
@@ -633,20 +656,27 @@ class RuntimeService:
                 detail=f"runtime command timed out after {self._settings.runtime_command_timeout_seconds}s",
             ) from exc
 
-    def _build_runtime_env(self) -> dict[str, str]:
+    def _build_runtime_env(self, *, env_overrides: dict[str, str] | None = None) -> dict[str, str]:
         env = os.environ.copy()
-        runtime_paths = [
-            str(Path(__file__).resolve().parents[2]),
-            "/home/macos/nanobot",
-        ]
-        existing = env.get("PYTHONPATH", "")
-        existing_parts = [part for part in existing.split(":") if part]
-        merged_parts: list[str] = []
-        for part in [*runtime_paths, *existing_parts]:
-            if part not in merged_parts:
-                merged_parts.append(part)
-        env["PYTHONPATH"] = ":".join(merged_parts)
+        if env_overrides:
+            env.update(env_overrides)
         return env
+
+    def _build_runtime_integration_env(
+        self,
+        *,
+        node: Node,
+        artifact_paths: dict[str, str],
+    ) -> dict[str, str]:
+        return {
+            RUNTIME_INTEGRATION_FACTORY_ENV: DEFAULT_RUNTIME_INTEGRATION_FACTORY,
+            RUNTIME_DATABASE_URL_ENV: self._settings.database_url,
+            RUNTIME_NODE_ID_ENV: node.id,
+            RUNTIME_NODE_NAME_ENV: node.name,
+            RUNTIME_OUTPUT_ROOT_ENV: artifact_paths["output_root"],
+            RUNTIME_PROMPT_LOG_ROOT_ENV: artifact_paths["prompt_logs_root"],
+            RUNTIME_CALL_SOURCE_ENV: "omniclaw.runtime.service",
+        }
 
     def _write_run_metadata(
         self,

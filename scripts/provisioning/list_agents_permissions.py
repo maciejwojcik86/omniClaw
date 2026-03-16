@@ -7,7 +7,17 @@ import grp
 from pathlib import Path
 import pwd
 import sqlite3
+import sys
 from typing import Iterable
+
+
+ROOT = Path(__file__).resolve().parents[2]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from omniclaw.company_paths import build_company_paths
+from omniclaw.config import build_settings
 
 
 @dataclass
@@ -41,9 +51,20 @@ class FsInfo:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="List nodes and workspace permissions using SQLite node data.")
     parser.add_argument(
+        "--company",
+        help="Registered company slug or display name.",
+    )
+    parser.add_argument(
+        "--global-config-path",
+        help="Override the OmniClaw global config path.",
+    )
+    parser.add_argument(
+        "--company-workspace-root",
+        help="Legacy explicit company workspace root override.",
+    )
+    parser.add_argument(
         "--database",
-        default="workspace/omniclaw.db",
-        help="Path to SQLite database file (default: workspace/omniclaw.db)",
+        help="Path to SQLite database file. Defaults to <company-workspace-root>/omniclaw.db.",
     )
     return parser.parse_args()
 
@@ -130,7 +151,15 @@ def print_table(rows: list[list[str]]) -> None:
 
 def main() -> int:
     args = parse_args()
-    db_path = Path(args.database).expanduser().resolve()
+    if args.database:
+        db_path = Path(args.database).expanduser().resolve()
+    else:
+        settings = build_settings(
+            company=args.company,
+            global_config_path=args.global_config_path,
+            company_workspace_root=args.company_workspace_root,
+        )
+        db_path = build_company_paths(settings).database_file
 
     if not db_path.exists():
         print(f"Database not found: {db_path}")

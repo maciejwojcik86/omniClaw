@@ -18,28 +18,11 @@ if str(SRC) not in sys.path:
 
 from omniclaw.app import create_app
 from omniclaw.budgets.engine import BudgetEngine
-from omniclaw.config import Settings
+from omniclaw.config import Settings, build_settings
 from omniclaw.db.enums import BudgetMode, NodeStatus, NodeType
 from omniclaw.db.repository import KernelRepository
 from omniclaw.db.session import create_session_factory
-from tests.helpers import migrate_database_to_head
-
-
-def _write_company_config(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "{\n"
-        '  "instructions": {\n'
-        '    "access_scope": "descendant"\n'
-        "  },\n"
-        '  "budgeting": {\n'
-        '    "daily_company_budget_usd": 4.0,\n'
-        '    "root_allocator_node": "Director_01",\n'
-        '    "reset_time_utc": "00:00"\n'
-        "  }\n"
-        "}\n",
-        encoding="utf-8",
-    )
+from tests.helpers import migrate_database_to_head, write_global_company_config
 
 
 def _ensure_workspace_dirs(workspace_root: Path) -> None:
@@ -58,19 +41,33 @@ def _ensure_workspace_dirs(workspace_root: Path) -> None:
 @pytest.fixture
 def app_and_client(tmp_path: Path):
     database_url = f"sqlite:///{tmp_path / 'budgets.db'}"
-    company_config_path = tmp_path / "workspace" / "company_config.json"
-    _write_company_config(company_config_path)
+    workspace_root = tmp_path / "workspace"
+    global_config_path = tmp_path / ".omniClaw" / "config.json"
+    write_global_company_config(
+        path=global_config_path,
+        workspace_root=workspace_root,
+        slug="budget-test",
+        display_name="Budget Test",
+        instructions={"access_scope": "descendant"},
+        budgeting={
+            "daily_company_budget_usd": 4.0,
+            "root_allocator_node": "Director_01",
+            "reset_time_utc": "00:00",
+        },
+    )
+    workspace_root.mkdir(parents=True, exist_ok=True)
 
-    settings = Settings(
-        app_name="omniclaw-kernel-budgets",
-        environment="test",
-        log_level="INFO",
+    settings = build_settings(
+        env={
+            "OMNICLAW_APP_NAME": "omniclaw-kernel-budgets",
+            "OMNICLAW_ENV": "test",
+            "OMNICLAW_LOG_LEVEL": "INFO",
+            "LITELLM_PROXY_URL": "http://localhost:4000",
+            "LITELLM_MASTER_KEY": "sk-master-key",
+        },
+        company="budget-test",
+        global_config_path=str(global_config_path),
         database_url=database_url,
-        provisioning_mode="mock",
-        allow_privileged_provisioning=False,
-        company_config_path=str(company_config_path.resolve()),
-        litellm_proxy_url="http://localhost:4000",
-        litellm_master_key="sk-master-key",
     )
     migrate_database_to_head(database_url)
 

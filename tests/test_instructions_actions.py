@@ -11,11 +11,11 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from omniclaw.app import create_app
-from omniclaw.config import Settings
+from omniclaw.config import build_settings
 from omniclaw.db.enums import NodeStatus, NodeType
 from omniclaw.db.repository import KernelRepository
 from omniclaw.db.session import create_session_factory
-from tests.helpers import migrate_database_to_head
+from tests.helpers import migrate_database_to_head, write_global_company_config
 
 
 def _ensure_workspace_dirs(workspace_root: Path) -> None:
@@ -31,20 +31,30 @@ def _ensure_workspace_dirs(workspace_root: Path) -> None:
         (workspace_root / relative).mkdir(parents=True, exist_ok=True)
 
 
-def _write_company_config(path: Path, *, access_scope: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "{\n"
-        '  "instructions": {\n'
-        f'    "access_scope": "{access_scope}"\n'
-        "  },\n"
-        '  "budgeting": {\n'
-        '    "daily_company_budget_usd": 3.0,\n'
-        '    "root_allocator_node": "Director_01",\n'
-        '    "reset_time_utc": "00:00"\n'
-        "  }\n"
-        "}\n",
-        encoding="utf-8",
+def _build_settings_for_workspace(*, tmp_path: Path, workspace_root: Path, database_url: str, access_scope: str):
+    global_config_path = tmp_path / ".omniClaw" / "config.json"
+    write_global_company_config(
+        path=global_config_path,
+        workspace_root=workspace_root,
+        slug="instructions-test",
+        display_name="Instructions Test",
+        instructions={"access_scope": access_scope},
+        budgeting={
+            "daily_company_budget_usd": 3.0,
+            "root_allocator_node": "Director_01",
+            "reset_time_utc": "00:00",
+        },
+    )
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    return build_settings(
+        env={
+            "OMNICLAW_APP_NAME": "omniclaw-kernel",
+            "OMNICLAW_ENV": "test",
+            "OMNICLAW_LOG_LEVEL": "INFO",
+        },
+        company="instructions-test",
+        global_config_path=str(global_config_path),
+        database_url=database_url,
     )
 
 
@@ -74,8 +84,6 @@ def _write_unread_form(
 def test_instructions_actions_render_templates_and_unread_summary(tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'instructions.db'}"
     workspace_root = tmp_path / "workspace"
-    company_config_path = workspace_root / "company_config.json"
-    _write_company_config(company_config_path, access_scope="descendant")
 
     human_workspace = workspace_root / "macos"
     director_workspace = workspace_root / "agents" / "Director_01" / "workspace"
@@ -91,14 +99,11 @@ def test_instructions_actions_render_templates_and_unread_summary(tmp_path: Path
         subject="Daily status",
     )
 
-    settings = Settings(
-        app_name="omniclaw-kernel",
-        environment="test",
-        log_level="INFO",
+    settings = _build_settings_for_workspace(
+        tmp_path=tmp_path,
+        workspace_root=workspace_root,
         database_url=database_url,
-        provisioning_mode="mock",
-        allow_privileged_provisioning=False,
-        company_config_path=str(company_config_path.resolve()),
+        access_scope="descendant",
     )
     migrate_database_to_head(database_url)
     app = create_app(settings)
@@ -208,8 +213,6 @@ def test_instructions_actions_render_templates_and_unread_summary(tmp_path: Path
 def test_instructions_access_scope_and_placeholder_validation(tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'instructions-access.db'}"
     workspace_root = tmp_path / "workspace"
-    company_config_path = workspace_root / "company_config.json"
-    _write_company_config(company_config_path, access_scope="direct_children")
 
     human_workspace = workspace_root / "macos"
     director_workspace = workspace_root / "agents" / "Director_01" / "workspace"
@@ -217,14 +220,11 @@ def test_instructions_access_scope_and_placeholder_validation(tmp_path: Path) ->
     for root in (human_workspace, director_workspace, worker_workspace):
         _ensure_workspace_dirs(root)
 
-    settings = Settings(
-        app_name="omniclaw-kernel",
-        environment="test",
-        log_level="INFO",
+    settings = _build_settings_for_workspace(
+        tmp_path=tmp_path,
+        workspace_root=workspace_root,
         database_url=database_url,
-        provisioning_mode="mock",
-        allow_privileged_provisioning=False,
-        company_config_path=str(company_config_path.resolve()),
+        access_scope="direct_children",
     )
     migrate_database_to_head(database_url)
     app = create_app(settings)
@@ -284,8 +284,6 @@ def test_instructions_access_scope_and_placeholder_validation(tmp_path: Path) ->
 def test_sync_all_active_agents_installs_manager_skill_for_nodes_with_subordinates(tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'instructions-sync.db'}"
     workspace_root = tmp_path / "workspace"
-    company_config_path = workspace_root / "company_config.json"
-    _write_company_config(company_config_path, access_scope="descendant")
 
     human_workspace = workspace_root / "macos"
     director_workspace = workspace_root / "agents" / "Director_01" / "workspace"
@@ -293,14 +291,11 @@ def test_sync_all_active_agents_installs_manager_skill_for_nodes_with_subordinat
     for root in (human_workspace, director_workspace, worker_workspace):
         _ensure_workspace_dirs(root)
 
-    settings = Settings(
-        app_name="omniclaw-kernel",
-        environment="test",
-        log_level="INFO",
+    settings = _build_settings_for_workspace(
+        tmp_path=tmp_path,
+        workspace_root=workspace_root,
         database_url=database_url,
-        provisioning_mode="mock",
-        allow_privileged_provisioning=False,
-        company_config_path=str(company_config_path.resolve()),
+        access_scope="descendant",
     )
     migrate_database_to_head(database_url)
     app = create_app(settings)
@@ -331,6 +326,13 @@ def test_sync_all_active_agents_installs_manager_skill_for_nodes_with_subordinat
     repository.link_manager(parent_node_id=human.id, child_node_id=director.id)
     repository.link_manager(parent_node_id=director.id, child_node_id=worker.id)
 
+    director_stray_skill = director_workspace / "skills" / "stray-local-skill"
+    director_stray_skill.mkdir(parents=True, exist_ok=True)
+    (director_stray_skill / "SKILL.md").write_text("# stray\n", encoding="utf-8")
+    worker_stray_skill = worker_workspace / "skills" / "stray-local-skill"
+    worker_stray_skill.mkdir(parents=True, exist_ok=True)
+    (worker_stray_skill / "SKILL.md").write_text("# stray\n", encoding="utf-8")
+
     client = TestClient(app)
     sync_response = client.post(
         "/v1/instructions/actions",
@@ -341,15 +343,13 @@ def test_sync_all_active_agents_installs_manager_skill_for_nodes_with_subordinat
     assert payload["summary"]["rendered"] == 2
     assert payload["skill_distribution"]["status"] == "ok"
 
-    human_skill = human_workspace / "skills" / "manage-agent-instructions" / "SKILL.md"
     director_skill = director_workspace / "skills" / "manage-agent-instructions" / "SKILL.md"
-    human_budget_skill = human_workspace / "skills" / "manage-team-budgets" / "SKILL.md"
     director_budget_skill = director_workspace / "skills" / "manage-team-budgets" / "SKILL.md"
     worker_skill = worker_workspace / "skills" / "manage-agent-instructions" / "SKILL.md"
     worker_budget_skill = worker_workspace / "skills" / "manage-team-budgets" / "SKILL.md"
-    assert human_skill.exists()
     assert director_skill.exists()
-    assert human_budget_skill.exists()
     assert director_budget_skill.exists()
+    assert director_stray_skill.exists() is False
     assert worker_skill.exists() is False
     assert worker_budget_skill.exists() is False
+    assert worker_stray_skill.exists() is False

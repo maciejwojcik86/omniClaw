@@ -4,6 +4,15 @@ from __future__ import annotations
 import argparse
 import sqlite3
 from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[2]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from omniclaw.company_paths import build_company_paths
+from omniclaw.config import build_settings
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -13,16 +22,35 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--agent-name", required=True, help="Agent node name, e.g. Director_01")
     parser.add_argument("--session-key", required=True, help="Session key, e.g. cli:hello-20260308-Director_01")
     parser.add_argument(
+        "--company",
+        help="Registered company slug or display name.",
+    )
+    parser.add_argument(
+        "--global-config-path",
+        help="Override the OmniClaw global config path.",
+    )
+    parser.add_argument(
+        "--company-workspace-root",
+        help="Legacy explicit company workspace root override.",
+    )
+    parser.add_argument(
         "--database",
-        default="/home/macos/omniClaw/workspace/omniclaw.db",
-        help="Path to the OmniClaw SQLite database",
+        help="Path to the OmniClaw SQLite database. Defaults to <company-workspace-root>/omniclaw.db.",
     )
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
-    database_path = Path(args.database).expanduser().resolve()
+    if args.database:
+        database_path = Path(args.database).expanduser().resolve()
+    else:
+        settings = build_settings(
+            company=args.company,
+            global_config_path=args.global_config_path,
+            company_workspace_root=args.company_workspace_root,
+        )
+        database_path = build_company_paths(settings).database_file
     conn = sqlite3.connect(database_path)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()

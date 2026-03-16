@@ -1422,6 +1422,118 @@ def test_ipc_scan_supports_terminal_null_stage_without_required_skill(tmp_path: 
         assert form.current_holder_node is None
 
 
+def test_ipc_scan_restores_routed_stage_skill_and_removes_stray_local_skill(tmp_path: Path, monkeypatch) -> None:
+    workspace_root = tmp_path / "workspace"
+    monkeypatch.setattr(FormsService, "_workspace_root", lambda self: workspace_root)
+    monkeypatch.setattr(IpcRouterService, "_workspace_forms_root", lambda self: workspace_root / "forms")
+    monkeypatch.setattr(IpcRouterService, "_workspace_form_archive_root", lambda self: workspace_root / "form_archive")
+    _seed_form_stage_skills(
+        workspace_root=workspace_root,
+        form_type="routed_skill_restore_form",
+        skill_names=["draft-internal-message", "read-and-acknowledge-internal-message"],
+    )
+
+    database_url = f"sqlite:///{tmp_path / 'ipc-routed-skill-restore.db'}"
+    sender_workspace = tmp_path / "sender-workspace"
+    target_workspace = tmp_path / "target-workspace"
+    _ensure_workspace_dirs(sender_workspace)
+    _ensure_workspace_dirs(target_workspace)
+
+    settings = Settings(
+        app_name="omniclaw-kernel",
+        environment="test",
+        log_level="INFO",
+        database_url=database_url,
+        provisioning_mode="mock",
+        allow_privileged_provisioning=False,
+    )
+    migrate_database_to_head(database_url)
+    app = create_app(settings)
+    repository = KernelRepository(create_session_factory(database_url))
+    repository.create_node(
+        node_type=NodeType.AGENT,
+        name="Restore_Sender_01",
+        status=NodeStatus.ACTIVE,
+        workspace_root=str(sender_workspace.resolve()),
+    )
+    repository.create_node(
+        node_type=NodeType.AGENT,
+        name="Restore_Target_01",
+        status=NodeStatus.ACTIVE,
+        workspace_root=str(target_workspace.resolve()),
+    )
+
+    client = TestClient(app)
+    upsert_response = client.post(
+        "/v1/forms/actions",
+        json={
+            "action": "upsert_form_type",
+            "type_key": "routed_skill_restore_form",
+            "version": "1.0.0",
+            "workflow_graph": {
+                "start_stage": "DRAFT",
+                "end_stage": "ARCHIVED",
+                "stages": {
+                    "DRAFT": {
+                        "target": "{{initiator}}",
+                        "required_skill": "draft-internal-message",
+                        "decisions": {
+                            "send": "WAITING_TO_BE_READ",
+                        },
+                    },
+                    "WAITING_TO_BE_READ": {
+                        "target": "Restore_Target_01",
+                        "required_skill": "read-and-acknowledge-internal-message",
+                        "decisions": {
+                            "acknowledge_read": "ARCHIVED",
+                        },
+                    },
+                    "ARCHIVED": {
+                        "target": None,
+                        "is_terminal": True,
+                    },
+                },
+            },
+            "stage_metadata": {},
+        },
+    )
+    assert upsert_response.status_code == 200
+    assert upsert_response.json()["validation_errors"] == []
+
+    activate_response = client.post(
+        "/v1/forms/actions",
+        json={
+            "action": "activate_form_type",
+            "type_key": "routed_skill_restore_form",
+            "version": "1.0.0",
+        },
+    )
+    assert activate_response.status_code == 200
+
+    shutil.rmtree(target_workspace / "skills")
+    stray_skill_dir = target_workspace / "skills" / "stray-local-skill"
+    stray_skill_dir.mkdir(parents=True, exist_ok=True)
+    (stray_skill_dir / "SKILL.md").write_text("# stray\n", encoding="utf-8")
+
+    queue_file = sender_workspace / "outbox" / "send" / "restore.md"
+    _write_generic_form_file(
+        queue_file=queue_file,
+        form_type="routed_skill_restore_form",
+        stage="DRAFT",
+        decision="send",
+        target=None,
+    )
+
+    scan_response = client.post("/v1/ipc/actions", json={"action": "scan_forms"})
+    assert scan_response.status_code == 200
+    payload = scan_response.json()
+    assert payload["summary"]["routed"] == 1
+
+    restored_skill = target_workspace / "skills" / "read-and-acknowledge-internal-message" / "SKILL.md"
+    assert restored_skill.exists()
+    assert stray_skill_dir.exists() is False
+
+
 def test_ipc_scan_stops_processing_after_limit(tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'ipc-limit.db'}"
     sender_workspace = tmp_path / "sender-workspace"

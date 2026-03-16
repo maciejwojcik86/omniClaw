@@ -7,7 +7,7 @@ from omniclaw.provisioning.contracts import (
     UserProvisioningResult,
     WorkspaceProvisioningResult,
 )
-from omniclaw.provisioning.scaffold import REQUIRED_DIRS, REQUIRED_FILES
+from omniclaw.provisioning.scaffold import ensure_workspace_tree
 
 
 class MockProvisioningAdapter:
@@ -63,24 +63,31 @@ class MockProvisioningAdapter:
             self._operations.append({"step": "ensure_user_groups", "username": username, "groups": list(groups)})
         return created
 
-    def ensure_workspace(self, *, workspace_root: Path) -> WorkspaceProvisioningResult:
+    def ensure_workspace(
+        self,
+        *,
+        workspace_root: Path,
+        template_root: Path | None = None,
+    ) -> WorkspaceProvisioningResult:
         root = str(workspace_root.expanduser().resolve())
         is_new = root not in self._workspaces
         self._workspaces.add(root)
-
-        all_dirs = (root,) + tuple(f"{root}/{relative}" for relative in REQUIRED_DIRS)
-        all_files = tuple(f"{root}/{relative}" for relative in REQUIRED_FILES)
+        scaffold_result = ensure_workspace_tree(
+            workspace_root=workspace_root,
+            apply=False,
+            template_root=template_root,
+        )
 
         if is_new:
-            created_dirs = all_dirs
+            created_dirs = scaffold_result["created_dirs"]
             existing_dirs = tuple()
-            created_files = all_files
+            created_files = scaffold_result["created_files"]
             existing_files = tuple()
         else:
             created_dirs = tuple()
-            existing_dirs = all_dirs
+            existing_dirs = scaffold_result["created_dirs"] + scaffold_result["existing_dirs"]
             created_files = tuple()
-            existing_files = all_files
+            existing_files = scaffold_result["created_files"] + scaffold_result["existing_files"]
 
         self._operations.append(
             {

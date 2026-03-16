@@ -1,6 +1,6 @@
 {
   "name": "manage-agent-instructions",
   "version": "1.0.0",
-  "description": "Kernel-backed manager workflow for listing, previewing, and updating subordinate AGENTS templates.",
+  "description": "Kernel-backed workflow for reviewing and editing subordinate AGENTS templates outside deployed workspaces.",
   "author": "omniclaw-kernel"
 }

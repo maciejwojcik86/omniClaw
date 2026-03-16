@@ -19,6 +19,7 @@ from omniclaw.provisioning import (
     SystemProvisioningAdapter,
 )
 from omniclaw.runtime import RuntimeActionRequest, RuntimeService
+from omniclaw.skills import SkillsActionRequest, SkillsService
 from omniclaw.budgets.schemas import BudgetActionRequest
 from omniclaw.budgets.service import BudgetService
 from omniclaw.usage.routes import build_usage_router
@@ -33,17 +34,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     engine = create_engine_from_url(resolved_settings.database_url)
     require_database_at_head(resolved_settings.database_url, engine=engine)
     session_factory = create_session_factory(resolved_settings.database_url, engine=engine)
-    repository = KernelRepository(session_factory)
+    repository = KernelRepository(session_factory, settings=resolved_settings)
     mock_adapter = MockProvisioningAdapter()
     system_adapter = SystemProvisioningAdapter(
         helper_path=resolved_settings.provisioning_helper_path,
         helper_use_sudo=resolved_settings.provisioning_helper_use_sudo,
     )
-    instructions_service = InstructionsService(settings=resolved_settings, repository=repository)
+    skills_service = SkillsService(settings=resolved_settings, repository=repository)
+    instructions_service = InstructionsService(
+        settings=resolved_settings,
+        repository=repository,
+        skills_service=skills_service,
+    )
     ipc_service = IpcRouterService(
         settings=resolved_settings,
         repository=repository,
         instructions_service=instructions_service,
+        skills_service=skills_service,
     )
 
     async def _ipc_scan_loop(stop_event: asyncio.Event) -> None:
@@ -72,7 +79,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     async def _budget_maintenance_loop(stop_event: asyncio.Event) -> None:
         interval = max(1, resolved_settings.budget_auto_cycle_poll_interval_seconds)
-        service = BudgetService(repository=repository)
+        service = BudgetService(repository=repository, settings=resolved_settings)
         while not stop_event.is_set():
             try:
                 result = await service.run_due_cycle()
@@ -162,7 +169,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 detail=f"Unsupported provisioning mode '{mode}'",
             )
 
-        service = ProvisioningService(adapter=adapter, repository=repository)
+        service = ProvisioningService(adapter=adapter, repository=repository, settings=resolved_settings)
         response = service.execute(request)
         response["mode"] = mode
         return response
@@ -200,14 +207,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def instructions_actions(request: InstructionsActionRequest) -> dict[str, object]:
         return instructions_service.execute(request)
 
+    @app.post("/v1/skills/actions")
+    def skills_actions(request: SkillsActionRequest) -> dict[str, object]:
+        return skills_service.execute(request)
+
     @app.post("/v1/forms/actions")
     def forms_actions(request: FormsActionRequest) -> dict[str, object]:
-        service = FormsService(repository=repository)
+        service = FormsService(
+            repository=repository,
+            settings=resolved_settings,
+            skills_service=skills_service,
+        )
         return service.execute(request)
 
     @app.post("/v1/forms/workspace/sync")
     def forms_workspace_sync(request: FormsWorkspaceSyncRequest | None = None) -> dict[str, object]:
-        service = FormsService(repository=repository)
+        service = FormsService(
+            repository=repository,
+            settings=resolved_settings,
+            skills_service=skills_service,
+        )
         payload = request or FormsWorkspaceSyncRequest()
         return service.sync_workspace_form_types(
             prune_missing=payload.prune_missing,
@@ -216,7 +235,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/budgets/actions")
     async def budgets_actions(request: BudgetActionRequest) -> dict[str, object]:
-        service = BudgetService(repository=repository)
+        service = BudgetService(repository=repository, settings=resolved_settings)
         return await service.execute(request)
 
     app.include_router(build_usage_router(lambda: UsageService(repository=repository)))

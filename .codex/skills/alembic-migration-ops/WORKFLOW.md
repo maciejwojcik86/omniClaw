@@ -22,7 +22,7 @@
 - run migration-specific verification script in this skill
 
 5. Validate behavior
-- `uv run pytest -q`
+- `uv run pytest -q tests`
 
 6. If Alembic history is missing but schema already exists
 - `uv run alembic stamp <known_revision>`

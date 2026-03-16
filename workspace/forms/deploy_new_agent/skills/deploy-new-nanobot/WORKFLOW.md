@@ -18,7 +18,7 @@ For existing kernel user HUMAN node:
 
 ## Local execution path
 
-1. optional `skills/deploy-new-nanobot/scripts/package_nanobot_source.sh` (archive the local `/home/macos/nanobot` fork)
+1. optional `skills/deploy-new-nanobot/scripts/package_nanobot_source.sh` (archive the vendored `third_party/nanobot` fork)
 2. `skills/deploy-new-nanobot/scripts/trigger_kernel_action.sh` with action `provision_agent`
 3. `skills/deploy-new-nanobot/scripts/create_workspace_tree.py` (write the OmniClaw/Nanobot workspace scaffold from `/home/macos/omniClaw/workspace/nanobot_workspace_templates/`)
 4. `skills/deploy-new-nanobot/scripts/init_nanobot_config.py` (write or update the sibling `config.json` from `/home/macos/omniClaw/workspace/nanobot_workspace_templates/config.json`)

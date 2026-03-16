@@ -2,7 +2,7 @@
 name: deploy-new-nanobot
 description: End-to-end workflow to deploy a repo-local Nanobot agent with a sibling config.json, OmniClaw workspace scaffold, kernel provisioning payload, and optional packaged runtime source artifact.
 license: MIT
-compatibility: Linux/macOS host, Python 3.11+, Nanobot CLI available or packaged from local fork
+compatibility: Linux/macOS host, Python 3.11+, Nanobot CLI available or packaged from the vendored monorepo fork
 metadata:
   author: omniclaw
   version: "1.0"
@@ -26,7 +26,7 @@ This skill covers the canonical Nanobot deploy path:
 - Write workspace-root `AGENTS.md` instructions and preserve the Nanobot-native context files using the canonical files under `/home/macos/omniClaw/workspace/nanobot_workspace_templates/`.
 - Register or update the AGENT node through the kernel `provision_agent` action.
 - Keep line-management semantics intact: every AGENT still has one manager node.
-- Optionally package the local `/home/macos/nanobot/` fork into a reusable source archive for another machine.
+- Optionally package the vendored monorepo Nanobot fork from `/home/macos/omniClaw/third_party/nanobot/` into a reusable source archive for another machine.
 - Provide explicit `nanobot gateway -w -c` and `nanobot agent -w -c` smoke commands.
 
 ## Layout Contract
@@ -79,8 +79,8 @@ Compatibility wrappers:
 
 ## Quick Workflow
 
-1. Optional: package the local Nanobot fork so another machine can install the same runtime:
-   - `skills/deploy-new-nanobot/scripts/package_nanobot_source.sh --apply --source-dir /home/macos/nanobot --output-dir /home/macos/omniClaw/workspace/runtime_packages`
+1. Optional: package the vendored monorepo Nanobot fork so another machine can install the same runtime:
+   - `skills/deploy-new-nanobot/scripts/package_nanobot_source.sh --apply --source-dir /home/macos/omniClaw/third_party/nanobot --output-dir /home/macos/omniClaw/workspace/runtime_packages`
 2. Dry-run deployment:
    - `skills/deploy-new-nanobot/scripts/deploy_new_nanobot.sh --username agent_hr_head_01 --node-name HR_Head_01 --manager-name Director_01 --role-name "Head of Human Resources" --agents-source-file /tmp/hr-head-01-AGENTS.md --seed-config skills/deploy-new-nanobot/templates/nanobot_seed_config.json`
 3. Apply deployment:
@@ -102,7 +102,7 @@ Use this before running `scripts/forms/smoke_deploy_new_agent_e2e.sh --apply`:
    - `nanobot gateway -w <workspace_root> -c <config_path> -p <port>`
    - `nanobot agent -w <workspace_root> -c <config_path> -m "heartbeat smoke"`
 4. Validate each routed hop still includes kernel-managed `stage_skill`.
-5. If the target host needs your local Nanobot fork, archive it first and install from that archive on the destination host.
+5. If the target host needs your patched Nanobot runtime, archive the vendored fork first and install from that archive on the destination host.
 
 ## Line Management Contract
 

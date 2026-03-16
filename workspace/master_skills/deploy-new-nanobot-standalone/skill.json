@@ -1,0 +1,6 @@
+{
+  "name": "deploy-new-nanobot-standalone",
+  "version": "1.0.0",
+  "description": "Standalone loose master skill to deploy a repo-local Nanobot agent without the full deploy_new_agent approval workflow.",
+  "author": "omniclaw"
+}

@@ -67,7 +67,7 @@ With this enabled, `deploy_new_claw_agent.sh` can complete privileged steps (use
 
 ```bash
 cd /home/macos/omniClaw
-uv run python main.py
+uv run omniclaw
 ```
 
 ## 4.1) Human workspace baseline inside repo

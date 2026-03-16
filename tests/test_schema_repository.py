@@ -12,7 +12,14 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from omniclaw.db.enums import FormStatus, FormTypeLifecycle, NodeStatus, NodeType
+from omniclaw.db.enums import (
+    FormStatus,
+    FormTypeLifecycle,
+    MasterSkillLifecycleStatus,
+    NodeSkillAssignmentSource,
+    NodeStatus,
+    NodeType,
+)
 from omniclaw.db.models import FormLedger
 from omniclaw.db.repository import KernelRepository, TransitionConflictError
 from omniclaw.db.session import create_engine_from_url, create_session_factory, init_db
@@ -68,6 +75,7 @@ def test_alembic_upgrade_creates_canonical_tables(tmp_path: Path) -> None:
         "form_types",
         "form_transition_events",
         "master_skills",
+        "node_skill_assignments",
         "agent_llm_calls",
         "agent_session_exports",
     }.issubset(tables)
@@ -117,8 +125,18 @@ def test_alembic_upgrade_creates_canonical_tables(tmp_path: Path) -> None:
         "description",
         "version",
         "validation_status",
+        "lifecycle_status",
         "updated_at",
     }.issubset(master_skill_columns)
+
+    assignment_columns = {column["name"] for column in inspector.get_columns("node_skill_assignments")}
+    assert {
+        "node_id",
+        "skill_id",
+        "assignment_source",
+        "assigned_by_node_id",
+        "updated_at",
+    }.issubset(assignment_columns)
 
     budget_columns = {column["name"] for column in inspector.get_columns("budgets")}
     assert {
@@ -490,3 +508,64 @@ def test_repository_resolves_unique_node_reference(tmp_path: Path) -> None:
     missing, missing_error = repository.resolve_unique_node_reference("missing-node")
     assert missing is None
     assert missing_error == "node name 'missing-node' not found"
+
+
+def test_repository_persists_master_skill_lifecycle_and_assignments(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'skill-repository.db'}"
+    engine = create_engine_from_url(database_url)
+    init_db(engine)
+    repository = KernelRepository(create_session_factory(database_url))
+
+    agent = repository.create_node(
+        node_type=NodeType.AGENT,
+        name="Skill_Node_01",
+        status=NodeStatus.ACTIVE,
+        workspace_root=str((tmp_path / "workspace" / "agents" / "Skill_Node_01" / "workspace").resolve()),
+    )
+
+    loose_skill = repository.upsert_master_skill(
+        name="skill-alpha",
+        form_type_key=None,
+        master_path=str((tmp_path / "workspace" / "master_skills" / "skill-alpha").resolve()),
+        description="Alpha skill",
+        version="1.0.0",
+        lifecycle_status=MasterSkillLifecycleStatus.ACTIVE,
+    )
+    form_skill = repository.upsert_master_skill(
+        name="stage-skill-beta",
+        form_type_key="deploy_new_agent",
+        master_path=str((tmp_path / "workspace" / "forms" / "deploy_new_agent" / "skills" / "stage-skill-beta").resolve()),
+        description="Stage skill",
+        version="1.0.0",
+        lifecycle_status=MasterSkillLifecycleStatus.ACTIVE,
+    )
+
+    repository.upsert_node_skill_assignment(
+        node_id=agent.id,
+        skill_id=loose_skill.id,
+        assignment_source=NodeSkillAssignmentSource.MANUAL,
+    )
+    repository.upsert_node_skill_assignment(
+        node_id=agent.id,
+        skill_id=form_skill.id,
+        assignment_source=NodeSkillAssignmentSource.FORM_STAGE,
+    )
+
+    details = repository.list_node_skill_assignment_details(node_id=agent.id)
+    assert len(details) == 2
+    assert {skill.name for _, skill in details} == {"skill-alpha", "stage-skill-beta"}
+
+    updated_skill = repository.set_master_skill_lifecycle_status(
+        name="skill-alpha",
+        lifecycle_status=MasterSkillLifecycleStatus.DEACTIVATED,
+    )
+    assert updated_skill.lifecycle_status == MasterSkillLifecycleStatus.DEACTIVATED
+
+    repository.delete_node_skill_assignments(
+        node_id=agent.id,
+        skill_ids=[loose_skill.id],
+        assignment_source=NodeSkillAssignmentSource.MANUAL,
+    )
+    remaining = repository.list_node_skill_assignment_details(node_id=agent.id)
+    assert len(remaining) == 1
+    assert remaining[0][1].name == "stage-skill-beta"

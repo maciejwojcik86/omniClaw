@@ -29,7 +29,7 @@ This repo now includes revisions:
 
 Validated state in this repo:
 - `uv run alembic current` => current revision at head
-- `uv run pytest -q` => full suite green
+- `uv run pytest -q tests` => canonical OmniClaw suite green
 
 ## Procedure
 
@@ -43,7 +43,7 @@ Validated state in this repo:
 - use `PRAGMA table_info(nodes)` for sqlite
 - or run `.codex/skills/alembic-migration-ops/scripts/verify_m04_node_runtime_tracking.sh`
 5. Run tests:
-- `uv run pytest -q`
+- `uv run pytest -q tests`
 
 ## Existing DB Recovery Pattern
 
@@ -60,7 +60,7 @@ Kernel startup now enforces Alembic-head alignment and fails fast if DB revision
 Recovery steps:
 1. `uv run alembic current`
 2. `uv run alembic upgrade head`
-3. Restart kernel (`uv run python main.py`)
+3. Restart kernel (`uv run omniclaw`)
 
 If startup still fails, confirm app is pointing at expected DB URL (`OMNICLAW_DATABASE_URL`).
 
@@ -78,7 +78,7 @@ for row in cur.fetchall():
     print(row)
 conn.close()
 PY
-uv run pytest -q
+uv run pytest -q tests
 ```
 
 ## Related Skills

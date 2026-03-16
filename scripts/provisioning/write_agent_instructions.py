@@ -5,6 +5,16 @@ import argparse
 from datetime import datetime, timezone
 from pathlib import Path
 import re
+import sys
+
+
+ROOT = Path(__file__).resolve().parents[2]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from omniclaw.company_paths import CompanyPaths, build_company_paths
+from omniclaw.config import build_settings
 
 
 PLACEHOLDER_PATTERN = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s*\}\}")
@@ -35,33 +45,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manager-name", default="Human Supervisor")
     parser.add_argument("--primary-model", default="unassigned")
     parser.add_argument("--source-file", default="", help="Optional markdown source file to use instead of template")
+    parser.add_argument("--company", default="")
+    parser.add_argument("--global-config-path", default="")
+    parser.add_argument("--company-workspace-root", default="")
     parser.add_argument("--apply", action="store_true", help="Apply filesystem changes (default: dry-run)")
     return parser.parse_args()
 
 
-def find_repo_root(start: Path) -> Path | None:
-    current = start.resolve()
-    while True:
-        if (current / "pyproject.toml").exists() and (current / "workspace").exists():
-            return current
-        if current == current.parent:
-            return None
-        current = current.parent
+def derive_instruction_template_root(*, company_paths: CompanyPaths, node_name: str) -> Path:
+    return company_paths.instruction_templates_root / node_name
 
 
-def derive_instruction_template_root(*, repo_root: Path, node_name: str, workspace_root: Path) -> Path:
-    resolved_workspace = workspace_root.expanduser().resolve()
-    if (
-        resolved_workspace.name == "workspace"
-        and len(resolved_workspace.parents) >= 3
-        and resolved_workspace.parent.parent.name == "agents"
-    ):
-        return resolved_workspace.parents[2] / "nanobots_instructions" / node_name
-    return repo_root / "workspace" / "nanobots_instructions" / node_name
-
-
-def load_default_template(repo_root: Path) -> str:
-    return (repo_root / "workspace" / "nanobot_workspace_templates" / "AGENTS.md").read_text(encoding="utf-8")
+def load_default_template(company_paths: CompanyPaths) -> str:
+    template_path = company_paths.workspace_templates_root / "AGENTS.md"
+    return template_path.read_text(encoding="utf-8")
 
 
 def render_template(*, template_content: str, node_name: str, role_name: str, manager_name: str, primary_model: str) -> str:
@@ -93,24 +90,25 @@ def render_template(*, template_content: str, node_name: str, role_name: str, ma
 
 def main() -> int:
     args = parse_args()
+    settings = build_settings(
+        company=args.company or None,
+        global_config_path=args.global_config_path or None,
+        company_workspace_root=args.company_workspace_root or None,
+    )
+    company_paths = build_company_paths(settings)
     workspace_root = Path(args.workspace_root).expanduser().resolve()
     agents_path = workspace_root / "AGENTS.md"
 
-    repo_root = find_repo_root(Path(__file__).resolve().parent)
-    if repo_root is None:
-        raise FileNotFoundError("Unable to locate OmniClaw repo root for AGENTS template writing")
-
     template_root = derive_instruction_template_root(
-        repo_root=repo_root,
+        company_paths=company_paths,
         node_name=args.node_name,
-        workspace_root=workspace_root,
     )
     template_path = template_root / "AGENTS.md"
 
     if args.source_file:
         template_content = Path(args.source_file).expanduser().resolve().read_text(encoding="utf-8")
     else:
-        template_content = load_default_template(repo_root)
+        template_content = load_default_template(company_paths)
 
     rendered_content = render_template(
         template_content=template_content,

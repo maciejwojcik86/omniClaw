@@ -83,6 +83,11 @@ def test_provision_agent_in_mock_mode_updates_nodes_and_hierarchy(mock_client_cl
         database_url=database_url,
         provisioning_mode="mock",
         allow_privileged_provisioning=False,
+        company_settings={
+            "skills": {
+                "default_agent_skill_names": ["form_workflow_authoring"],
+            }
+        },
         litellm_proxy_url="http://localhost:4000",
         litellm_master_key="sk-master",
     )
@@ -135,8 +140,11 @@ def test_provision_agent_in_mock_mode_updates_nodes_and_hierarchy(mock_client_cl
     assert payload["runtime_config"]["path"] == str(expected_config_path.resolve())
     assert payload["runtime_config"]["created"] is True
     assert payload["instructions"]["status"] == "rendered"
+    assert payload["default_skills"] == ["form_workflow_authoring"]
+    assert payload["skill_sync"]["status"] == "synced"
     assert expected_config_path.exists()
     assert (expected_template_root / "AGENTS.md").exists()
+    assert (workspace_root / "skills" / "form_workflow_authoring" / "SKILL.md").exists()
     rendered_agents = (workspace_root / "AGENTS.md").read_text(encoding="utf-8")
     assert "Role: Director" in rendered_agents
     assert "Node: Director_01" in rendered_agents

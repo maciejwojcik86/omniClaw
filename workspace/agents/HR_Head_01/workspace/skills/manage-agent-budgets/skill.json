@@ -1,0 +1,6 @@
+{
+  "name": "manage-agent-budgets",
+  "version": "1.0.0",
+  "description": "Review manager/team budget state, update direct-report waterfall allocations, run daily budget cycles, and inspect budget-change notifications through OmniClaw kernel endpoints.",
+  "author": "omniclaw-kernel"
+}

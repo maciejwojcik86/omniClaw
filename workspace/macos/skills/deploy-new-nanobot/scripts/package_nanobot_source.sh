@@ -29,7 +29,7 @@ USAGE
 
 repo_root="$(find_repo_root || true)"
 dry_run=1
-source_dir="/home/macos/nanobot"
+source_dir="/home/macos/omniClaw/third_party/nanobot"
 output_dir="${repo_root:+$repo_root/workspace/runtime_packages}"
 output_dir="${output_dir:-$(pwd)/runtime_packages}"
 archive_name=""
@@ -70,7 +70,7 @@ if [[ ! -d "$source_dir" ]]; then
 fi
 
 if [[ -z "$archive_name" ]]; then
-  archive_name="nanobot-patched-$(date +%Y%m%d).tar.gz"
+  archive_name="nanobot-monorepo-$(date +%Y%m%d).tar.gz"
 fi
 
 archive_path="$output_dir/$archive_name"

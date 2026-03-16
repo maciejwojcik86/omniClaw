@@ -15,6 +15,8 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+from omniclaw.company_paths import build_company_paths
+from omniclaw.config import build_settings
 from omniclaw.db.repository import KernelRepository
 from omniclaw.db.models import FormLedger
 from omniclaw.db.session import create_session_factory
@@ -27,14 +29,29 @@ def parse_args() -> argparse.Namespace:
         description="Sync form_types table from workspace/forms/*/workflow.json definitions."
     )
     parser.add_argument(
+        "--company",
+        default="",
+        help="Registered company slug or display name.",
+    )
+    parser.add_argument(
+        "--global-config-path",
+        default="",
+        help="Override the OmniClaw global config path.",
+    )
+    parser.add_argument(
+        "--company-workspace-root",
+        default="",
+        help="Legacy explicit company workspace root override.",
+    )
+    parser.add_argument(
         "--database-url",
-        default="sqlite:///./workspace/omniclaw.db",
-        help="SQLAlchemy database URL (default: sqlite:///./workspace/omniclaw.db)",
+        default="",
+        help="SQLAlchemy database URL (default: sqlite under the selected company workspace)",
     )
     parser.add_argument(
         "--forms-root",
-        default="workspace/forms",
-        help="Forms root directory (default: workspace/forms)",
+        default="",
+        help="Forms root directory (default: <company-workspace-root>/forms)",
     )
     parser.add_argument(
         "--prune-missing",
@@ -110,7 +127,14 @@ def _sync_workflow(
 
 def main() -> int:
     args = parse_args()
-    forms_root = Path(args.forms_root).resolve()
+    settings = build_settings(
+        company=args.company or None,
+        global_config_path=args.global_config_path or None,
+        company_workspace_root=args.company_workspace_root or None,
+        database_url=args.database_url or None,
+    )
+    company_paths = build_company_paths(settings)
+    forms_root = Path(args.forms_root or str(company_paths.forms_root)).resolve()
     if not forms_root.exists():
         print(f"forms root not found: {forms_root}", file=sys.stderr)
         return 1
@@ -120,8 +144,8 @@ def main() -> int:
         print(f"no workflow.json files found under: {forms_root}", file=sys.stderr)
         return 1
 
-    repository = KernelRepository(create_session_factory(args.database_url))
-    forms_service = FormsService(repository=repository)
+    repository = KernelRepository(create_session_factory(settings.database_url), settings=settings)
+    forms_service = FormsService(repository=repository, settings=settings)
 
     synced: set[tuple[str, str]] = set()
     print(f"syncing {len(workflow_paths)} workflow(s) from {forms_root}")
@@ -137,7 +161,7 @@ def main() -> int:
     removed: list[str] = []
     preserved: list[str] = []
     if args.prune_missing:
-        session_factory = create_session_factory(args.database_url)
+        session_factory = create_session_factory(settings.database_url)
         existing = repository.list_form_type_definitions()
         for definition in existing:
             key = (definition.type_key, definition.version)

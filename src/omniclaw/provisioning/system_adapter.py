@@ -66,14 +66,19 @@ class SystemProvisioningAdapter:
             created=created,
         )
 
-    def ensure_workspace(self, *, workspace_root: Path) -> WorkspaceProvisioningResult:
+    def ensure_workspace(
+        self,
+        *,
+        workspace_root: Path,
+        template_root: Path | None = None,
+    ) -> WorkspaceProvisioningResult:
         root = workspace_root.expanduser().resolve()
         if self._helper_path:
             self._run_helper(["create_workspace", str(root)])
             # Kernel process may not have permission to traverse the newly-created
             # workspace home path; return best-effort preview metadata.
             try:
-                scaffold_result = ensure_workspace_tree(workspace_root=root, apply=False)
+                scaffold_result = ensure_workspace_tree(workspace_root=root, apply=False, template_root=template_root)
             except PermissionError:
                 scaffold_result = {
                     "created_dirs": tuple(),
@@ -82,7 +87,7 @@ class SystemProvisioningAdapter:
                     "existing_files": tuple(),
                 }
         else:
-            scaffold_result = ensure_workspace_tree(workspace_root=root, apply=True)
+            scaffold_result = ensure_workspace_tree(workspace_root=root, apply=True, template_root=template_root)
         return WorkspaceProvisioningResult(
             workspace_root=str(root),
             created_dirs=scaffold_result["created_dirs"],

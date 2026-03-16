@@ -1,47 +1,31 @@
 # OmniClaw Current Task
 
-- active_change: `m10a-agentic-workflow-verification-surface`
-- objective: Prove the current M10 budget implementation through canonical agent-usable discovery, invocation, usage-reporting, and budget-report workflow surfaces before moving to the next milestone.
+- active_change: `none`
+- objective: Await next milestone selection after closing the global company registry change.
 
 ## last_completed_change
-- change: `m10-waterfall-budget-engine`
-- archived_as: `openspec/changes/archive/2026-03-11-m10-waterfall-budget-engine`
+- change: `m12b-global-company-registry`
+- archived_as: `openspec/changes/archive/2026-03-16-m12b-global-company-registry`
 - closure_notes:
-  - Implemented the deterministic waterfall budget engine with company-pool funding, hierarchical allocations, daily cycle tracking, and reserve carry-forward.
-  - Extended `POST /v1/budgets/actions` with team views, allocation updates, node mode changes, cycle execution, and subtree recalculation.
-  - Added runtime budget maintenance, AGENTS budget placeholders, manager-budget skill distribution, and direct-report budget change notifications.
-  - Validation completed before archive, including OpenSpec strict validation and pytest coverage for the M10 implementation.
+  - Replaced workspace-local company settings with one host-level OmniClaw registry at `~/.omniClaw/config.json`.
+  - Made `omniclaw --company <slug-or-display-name>` the canonical kernel startup contract.
+  - Migrated the local developer company into the registry, removed workspace-local company settings/model files, and archived the change after syncing canonical specs.
 
 ## next_focus
-- Active milestone extension: `m10a-agentic-workflow-verification-surface`
-- Current execution: close the remaining canonical workflow gaps so budget verification can be run through supported endpoints/scripts rather than developer-only inspection paths.
+- No active change is selected.
+- Next queued milestone in `docs/plan.md`: `m13-constitution-and-sop-pack`.
 
 ## blockers
-- None currently known for M10a implementation. The canonical verification path is now validated in the current environment.
+- None currently known.
 
 ## current_status
-- `m10-waterfall-budget-engine` is archived.
-- Supporting analysis docs are authored:
-  - `docs/agentic-workflow-gap-analysis.md`
-  - `docs/agentic-workflow-implementation-and-test-plan.md`
-- M10a implementation is validated end-to-end:
-  - canonical active-agent catalog with runtime/provider/budget metadata
-  - canonical budget report action and wrapper
-  - kernel-mediated prompt invocation surface and wrapper
-  - usage/session read APIs and wrappers
-  - canonical verification SOP skill mirrored between `.codex/skills/` and `skills/`
-  - mock-mode canonical invocation now persists deterministic usage rows and budget spend for proof-path verification
-- Validation completed:
-  - `uv run pytest -q tests/test_usage_actions.py tests/test_runtime_actions.py tests/test_budgets_actions.py` (`22 passed`)
-  - `uv run pytest -q` (`87 passed`)
-  - `openspec validate --type change m10a-agentic-workflow-verification-surface --strict`
-- Canonical wrapper-only end-to-end verification passed on 2026-03-11 using approved scripts only. Verified outputs included:
-  - session summary for `cli:m10a-verify-20260311-1435`
-  - recent-session listing for `HR_Head_01`
-  - budget delta showing `HR_Head_01 current_spend=0.08` and company `current_total_spend_usd=0.08`
+- `m12-nanobot-monorepo-internalization` is archived at `openspec/changes/archive/2026-03-16-m12-nanobot-monorepo-internalization`.
+- `m12b-global-company-registry` is archived at `openspec/changes/archive/2026-03-16-m12b-global-company-registry`.
+- The implemented company config state is now:
+  - `~/.omniClaw/config.json` is the only canonical company-settings source
+  - `omniclaw --company <slug-or-display-name>` is the canonical startup contract
+  - company workspaces keep editable assets and per-company SQLite state, but no longer own canonical company settings JSON
 
 ## next_up
-- Keep `m10a-agentic-workflow-verification-surface` open for a follow-up hardening slice before archive.
-- New follow-up task: internalize the currently customized Nanobot runtime into the OmniClaw monorepo and remove the current external-checkout coupling where `nanobot/agent/loop.py` directly imports `omniclaw.*` for usage logging.
-- Target direction: preserve automatic runtime-level LLM usage logging, but move toward a cleaner OmniClaw-owned integration boundary suitable for future Nanobot customization without depending on a separately maintained external fork.
-- Detailed next-session planning draft: `docs/nanobot-monorepo-internalization-openspec-plan.md`
+- Select and open the next OpenSpec change before more implementation work begins.
+- Keep the local registry-backed developer environment at `/home/macos/.omniClaw/config.json` and `/home/macos/.omniClaw/workspace` as the baseline for future work.

@@ -26,7 +26,7 @@ This skill covers the canonical Nanobot deploy path:
 - Write workspace-root `AGENTS.md` instructions and preserve the Nanobot-native context files using the canonical files under `/home/macos/omniClaw/workspace/nanobot_workspace_templates/`.
 - Register or update the AGENT node through the kernel `provision_agent` action.
 - Keep line-management semantics intact: every AGENT still has one manager node.
-- Optionally package the local `/home/macos/nanobot/` fork into a reusable source archive for another machine.
+- Optionally package the vendored monorepo `third_party/nanobot/` fork into a reusable source archive for another machine.
 - Provide explicit `nanobot gateway -w -c` and `nanobot agent -w -c` smoke commands.
 
 ## Layout Contract
@@ -80,7 +80,7 @@ Compatibility wrappers:
 ## Quick Workflow
 
 1. Optional: package the local Nanobot fork so another machine can install the same runtime:
-   - `skills/deploy-new-nanobot/scripts/package_nanobot_source.sh --apply --source-dir /home/macos/nanobot --output-dir /home/macos/omniClaw/workspace/runtime_packages`
+   - `skills/deploy-new-nanobot/scripts/package_nanobot_source.sh --apply --source-dir /home/macos/omniClaw/third_party/nanobot --output-dir /home/macos/.omniClaw/workspace/runtime_packages`
 2. Dry-run deployment:
    - `skills/deploy-new-nanobot/scripts/deploy_new_nanobot.sh --username agent_hr_head_01 --node-name HR_Head_01 --manager-name Director_01 --role-name "Head of Human Resources" --agents-source-file /tmp/hr-head-01-AGENTS.md --seed-config skills/deploy-new-nanobot/templates/nanobot_seed_config.json`
 3. Apply deployment:
@@ -90,6 +90,20 @@ Compatibility wrappers:
    - `nanobot agent -w /home/macos/omniClaw/workspace/agents/HR_Head_01/workspace -c /home/macos/omniClaw/workspace/agents/HR_Head_01/config.json -m "hello"`
 5. Audit canonical node state:
    - `python3 skills/deploy-new-nanobot/scripts/list_agents_permissions.py --database /home/macos/omniClaw/workspace/omniclaw.db`
+
+## Default Skill Assignment
+
+- New agents receive company-configured default loose skills during provisioning.
+- Current default set:
+  - `form_workflow_authoring`
+- Review active loose skills available for post-deploy assignment:
+  - `bash /home/macos/omniClaw/scripts/skills/list_active_master_skills.sh --apply`
+- Inspect the deployed agent's current effective skill set:
+  - `bash /home/macos/omniClaw/scripts/skills/list_agent_skill_assignments.sh --apply --target-node-name <agent_name>`
+- Add multiple loose skills after deployment in one request:
+  - `bash /home/macos/omniClaw/scripts/skills/assign_agent_skills.sh --apply --target-node-name <agent_name> --skill-names "skill_a,skill_b"`
+- Remove multiple manually assigned loose skills:
+  - `bash /home/macos/omniClaw/scripts/skills/remove_agent_skills.sh --apply --target-node-name <agent_name> --skill-names "skill_a,skill_b"`
 
 ## Live Smoke Preparation
 

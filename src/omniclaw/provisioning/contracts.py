@@ -43,7 +43,12 @@ class ProvisioningAdapter(Protocol):
     ) -> UserProvisioningResult:
         ...
 
-    def ensure_workspace(self, *, workspace_root: Path) -> WorkspaceProvisioningResult:
+    def ensure_workspace(
+        self,
+        *,
+        workspace_root: Path,
+        template_root: Path | None = None,
+    ) -> WorkspaceProvisioningResult:
         ...
 
     def apply_permissions(

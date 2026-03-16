@@ -11,6 +11,7 @@ from typing import Any, TextIO
 
 from fastapi import HTTPException
 
+from omniclaw.company_paths import CompanyPaths, build_company_paths, repo_workspace_root
 from omniclaw.config import Settings
 from omniclaw.db.models import FormLedger, FormTypeDefinition, Node
 from omniclaw.db.repository import KernelRepository
@@ -18,6 +19,7 @@ from omniclaw.forms.schemas import FormsActionRequest
 from omniclaw.instructions.service import InstructionsService
 from omniclaw.forms.service import FormsService
 from omniclaw.ipc.schemas import IpcActionRequest
+from omniclaw.skills.service import SkillsService
 
 
 class IpcRouterService:
@@ -35,13 +37,21 @@ class IpcRouterService:
         settings: Settings,
         repository: KernelRepository,
         instructions_service: InstructionsService | None = None,
+        skills_service: SkillsService | None = None,
     ) -> None:
         self._settings = settings
+        self._company_paths: CompanyPaths = build_company_paths(self._settings)
         self._repository = repository
-        self._forms_service = FormsService(repository=repository)
+        self._skills_service = skills_service or SkillsService(repository=repository, settings=settings)
+        self._forms_service = FormsService(
+            repository=repository,
+            settings=settings,
+            skills_service=self._skills_service,
+        )
         self._instructions_service = instructions_service or InstructionsService(
             settings=settings,
             repository=repository,
+            skills_service=self._skills_service,
         )
 
     def execute(self, request: IpcActionRequest) -> dict[str, object]:
@@ -1113,49 +1123,16 @@ class IpcRouterService:
         skill_name: str,
         target_nodes: list[Node],
     ) -> str | None:
+        _ = (master_skill_dir, skill_name)
         if not target_nodes:
             return None
 
-        safe_skill_rel, safe_error = self._safe_relative_path(skill_name)
-        if safe_error is not None:
-            return f"required_skill '{skill_name}' is invalid: {safe_error}"
-        manifest_defaults = self._load_skill_manifest_defaults(
-            master_skill_dir=master_skill_dir,
-            skill_name=skill_name,
-        )
-
         for node in target_nodes:
-            workspace = self._resolve_workspace_root(node)
-            if workspace is None:
-                return f"target node '{node.name}' has no valid workspace_root"
-            target_skill_dir = workspace / "skills" / safe_skill_rel
-            try:
-                if target_skill_dir.exists():
-                    if target_skill_dir.is_dir():
-                        shutil.rmtree(target_skill_dir)
-                    else:
-                        target_skill_dir.unlink()
-                target_skill_dir.mkdir(parents=True, exist_ok=True)
-                for child in master_skill_dir.iterdir():
-                    destination = target_skill_dir / child.name
-                    if child.is_dir():
-                        shutil.copytree(child, destination, dirs_exist_ok=True)
-                    else:
-                        shutil.copy2(child, destination)
-                manifest_error = self._ensure_skill_manifest(
-                    target_skill_dir=target_skill_dir,
-                    skill_name=skill_name,
-                    manifest_defaults=manifest_defaults,
-                )
-                if manifest_error is not None:
-                    return (
-                        f"failed to write skill.json for skill '{skill_name}' "
-                        f"at '{target_skill_dir}': {manifest_error}"
-                    )
-            except OSError as exc:
+            sync_result = self._skills_service.sync_node_skills(node=node)
+            if sync_result["status"] != "synced":
                 return (
-                    f"failed to distribute skill '{skill_name}' to node '{node.name}' "
-                    f"at '{target_skill_dir}': {exc}"
+                    f"failed to reconcile approved skills for node '{node.name}': "
+                    f"{sync_result.get('error', 'unknown error')}"
                 )
         return None
 
@@ -1267,13 +1244,15 @@ class IpcRouterService:
         return frontmatter
 
     def _workspace_forms_root(self) -> Path:
-        return Path(__file__).resolve().parents[3] / "workspace" / "forms"
+        if self._company_paths.forms_root.exists():
+            return self._company_paths.forms_root
+        return repo_workspace_root() / "forms"
 
     def _workspace_form_skills_root(self, *, form_type: str) -> Path:
         return self._workspace_forms_root() / form_type / "skills"
 
     def _workspace_form_archive_root(self) -> Path:
-        return Path(__file__).resolve().parents[3] / "workspace" / "form_archive"
+        return self._company_paths.form_archive_root
 
     def _resolve_archive_copy_path(self, *, form_type: str, form_id: str, stage: str, filename: str) -> Path:
         stage_slug = re.sub(r"[^A-Za-z0-9_-]+", "_", stage).strip("_") or "stage"

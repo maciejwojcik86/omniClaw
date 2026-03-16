@@ -78,6 +78,7 @@ def test_runtime_gateway_lifecycle_in_mock_mode(tmp_path: Path) -> None:
     assert start_metadata["action"] == "gateway_start"
     assert start_metadata["exit_code"] in {0, 10}
     assert start_metadata["artifact_paths"]["output_root"].startswith(str(workspace_root.resolve()))
+    assert start_payload["gateway"]["artifact_paths"]["prompt_logs_root"].startswith(str(workspace_root.resolve()))
     assert "--workspace" in start_metadata["command"]
     assert str(config_path.resolve()) in start_metadata["command"]
 
@@ -203,6 +204,7 @@ def test_runtime_invoke_prompt_in_mock_mode(tmp_path: Path) -> None:
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     assert metadata["action"] == "invoke_prompt"
     assert "nanobot agent" in metadata["command"]
+    assert payload["invocation"]["artifact_paths"]["prompt_logs_root"].startswith(str(workspace_root.resolve()))
 
     session_factory = create_session_factory(database_url)
     with session_factory() as session:
@@ -382,33 +384,34 @@ def test_runtime_invoke_prompt_system_mode_runs_cli_and_returns_output(tmp_path:
     assert "nanobot agent" in called_args[2]
     assert "--session 'cli:sys'" in called_args[2] or '--session cli:sys' in called_args[2]
     called_env = mocked_run.call_args.kwargs["env"]
-    pythonpath_parts = called_env["PYTHONPATH"].split(":")
-    assert str((ROOT / "src").resolve()) in pythonpath_parts
-    assert "/home/macos/nanobot" in pythonpath_parts
+    assert called_env["OMNICLAW_RUNTIME_DATABASE_URL"] == database_url
+    assert called_env["OMNICLAW_RUNTIME_NODE_ID"] == node.id
+    assert called_env["OMNICLAW_RUNTIME_NODE_NAME"] == node.name
+    assert called_env["OMNICLAW_RUNTIME_OUTPUT_ROOT"].startswith(str(workspace_root.resolve()))
+    assert called_env["OMNICLAW_RUNTIME_PROMPT_LOG_ROOT"].startswith(str(workspace_root.resolve()))
+    assert "/home/macos/nanobot" not in called_env.get("PYTHONPATH", "")
 
 
 def test_runtime_system_mode_budget_report_reconciles_subcent_usage(tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'runtime-system-budget.db'}"
     workspace_root = tmp_path / "agent-workspace-budget"
     config_path = tmp_path / "agent-config-budget.json"
-    company_config_path = tmp_path / "workspace" / "company_config.json"
     workspace_root.mkdir(parents=True, exist_ok=True)
-    company_config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text("{}", encoding="utf-8")
-    company_config_path.write_text(
-        "{\n"
-        '  "instructions": {"access_scope": "descendant"},\n'
-        '  "budgeting": {"daily_company_budget_usd": 3.0, "root_allocator_node": "Director_01", "reset_time_utc": "00:00"}\n'
-        "}\n",
-        encoding="utf-8",
-    )
 
     settings = Settings(
         app_name="omniclaw-kernel",
         environment="test",
         log_level="INFO",
         database_url=database_url,
-        company_config_path=str(company_config_path.resolve()),
+        company_settings={
+            "instructions": {"access_scope": "descendant"},
+            "budgeting": {
+                "daily_company_budget_usd": 3.0,
+                "root_allocator_node": "Director_01",
+                "reset_time_utc": "00:00",
+            },
+        },
         provisioning_mode="mock",
         allow_privileged_provisioning=False,
         runtime_mode="system",

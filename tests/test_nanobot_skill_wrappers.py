@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -20,6 +21,43 @@ def _seed_repo_root(repo_root: Path) -> None:
         encoding="utf-8",
     )
     shutil.copytree(TEMPLATE_ROOT, repo_root / "workspace" / "nanobot_workspace_templates", dirs_exist_ok=True)
+
+
+def _write_global_config(repo_root: Path) -> Path:
+    global_config_path = repo_root / ".omniClaw" / "config.json"
+    global_config_path.parent.mkdir(parents=True, exist_ok=True)
+    global_config_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "companies": {
+                    "skill-test": {
+                        "display_name": "Skill Test",
+                        "workspace_root": str((repo_root / "workspace").resolve()),
+                        "instructions": {"access_scope": "descendant"},
+                        "budgeting": {
+                            "daily_company_budget_usd": 0,
+                            "root_allocator_node": "UNSET_ROOT_ALLOCATOR",
+                            "reset_time_utc": "00:00",
+                        },
+                        "hierarchy": {"top_agent_node": "UNSET_TOP_AGENT"},
+                        "skills": {"default_agent_skill_names": ["form_workflow_authoring"]},
+                        "models": [],
+                        "runtime": {
+                            "ipc_router_auto_scan_enabled": True,
+                            "ipc_router_scan_interval_seconds": 5,
+                            "budget_auto_cycle_enabled": True,
+                            "budget_auto_cycle_poll_interval_seconds": 60,
+                        },
+                    }
+                },
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return global_config_path
 
 
 def _copy_skill_dir(*, repo_root: Path, source_relative: str, target_relative: str) -> Path:
@@ -47,8 +85,8 @@ def _copy_skill_dir(*, repo_root: Path, source_relative: str, target_relative: s
             "DRY-RUN provisioning payload:",
         ),
         (
-            "workspace/agents/Ops_Head_01/workspace/skills/deploy-new-nanobot",
-            "workspace/agents/Ops_Head_01/workspace/skills/deploy-new-nanobot",
+            "workspace/master_skills/deploy-new-nanobot-standalone",
+            "workspace/master_skills/deploy-new-nanobot-standalone",
             "provision_agent_workflow.sh",
             ["--username", "agent_test", "--manager-node-name", "Director_01"],
             '"node_name": "agent_test"',
@@ -65,6 +103,12 @@ def test_nanobot_skill_entrypoints_run_from_real_distributed_locations(
 ) -> None:
     repo_root = tmp_path / "repo"
     _seed_repo_root(repo_root)
+    global_config_path = _write_global_config(repo_root)
+    env = {
+        **os.environ,
+        "OMNICLAW_COMPANY": "skill-test",
+        "OMNICLAW_GLOBAL_CONFIG_PATH": str(global_config_path),
+    }
     target_dir = _copy_skill_dir(
         repo_root=repo_root,
         source_relative=source_relative,
@@ -74,6 +118,7 @@ def test_nanobot_skill_entrypoints_run_from_real_distributed_locations(
     result = subprocess.run(
         ["bash", str(target_dir / "scripts" / script_name), *args],
         cwd=repo_root,
+        env=env,
         capture_output=True,
         text=True,
         check=True,
@@ -85,6 +130,12 @@ def test_nanobot_skill_entrypoints_run_from_real_distributed_locations(
 def test_create_workspace_tree_uses_nanobot_workspace_templates(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     _seed_repo_root(repo_root)
+    global_config_path = _write_global_config(repo_root)
+    env = {
+        **os.environ,
+        "OMNICLAW_COMPANY": "skill-test",
+        "OMNICLAW_GLOBAL_CONFIG_PATH": str(global_config_path),
+    }
     target_dir = _copy_skill_dir(
         repo_root=repo_root,
         source_relative="workspace/forms/deploy_new_agent/skills/deploy-new-nanobot",
@@ -101,6 +152,7 @@ def test_create_workspace_tree_uses_nanobot_workspace_templates(tmp_path: Path) 
             str(workspace_root),
         ],
         cwd=repo_root,
+        env=env,
         capture_output=True,
         text=True,
         check=True,
@@ -117,6 +169,12 @@ def test_create_workspace_tree_uses_nanobot_workspace_templates(tmp_path: Path) 
 def test_init_nanobot_config_uses_nanobot_workspace_template(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     _seed_repo_root(repo_root)
+    global_config_path = _write_global_config(repo_root)
+    env = {
+        **os.environ,
+        "OMNICLAW_COMPANY": "skill-test",
+        "OMNICLAW_GLOBAL_CONFIG_PATH": str(global_config_path),
+    }
     target_dir = _copy_skill_dir(
         repo_root=repo_root,
         source_relative="workspace/forms/deploy_new_agent/skills/deploy-new-nanobot",
@@ -137,6 +195,7 @@ def test_init_nanobot_config_uses_nanobot_workspace_template(tmp_path: Path) -> 
             str(config_path),
         ],
         cwd=repo_root,
+        env=env,
         capture_output=True,
         text=True,
         check=True,
@@ -150,6 +209,12 @@ def test_init_nanobot_config_uses_nanobot_workspace_template(tmp_path: Path) -> 
 def test_write_agent_instructions_uses_nanobot_workspace_template(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     _seed_repo_root(repo_root)
+    global_config_path = _write_global_config(repo_root)
+    env = {
+        **os.environ,
+        "OMNICLAW_COMPANY": "skill-test",
+        "OMNICLAW_GLOBAL_CONFIG_PATH": str(global_config_path),
+    }
     target_dir = _copy_skill_dir(
         repo_root=repo_root,
         source_relative="workspace/forms/deploy_new_agent/skills/deploy-new-nanobot",
@@ -173,6 +238,7 @@ def test_write_agent_instructions_uses_nanobot_workspace_template(tmp_path: Path
             "Director_01",
         ],
         cwd=repo_root,
+        env=env,
         capture_output=True,
         text=True,
         check=True,

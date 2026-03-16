@@ -10,6 +10,8 @@ Usage:
                                 [--workflow-file <path>] [--initiator-workspace <path>]
                                 [--request-file <name.md>] [--nanobot-bin <bin>]
                                 [--scan-limit <n>] [--skip-agent-runs]
+                                [--company <slug-or-display-name>] [--global-config-path <path>]
+                                [--company-workspace-root <path>]
                                 [--allow-agent-fallback]
 
 Default mode is dry-run. Use --apply to execute.
@@ -29,9 +31,12 @@ USAGE
 
 dry_run=1
 kernel_url="${OMNICLAW_KERNEL_URL:-http://127.0.0.1:8000}"
-database="$ROOT/workspace/omniclaw.db"
-workflow_file="$ROOT/workspace/forms/deploy_new_agent/workflow.json"
-initiator_workspace="$ROOT/workspace/macos"
+company="${OMNICLAW_COMPANY:-}"
+global_config_path="${OMNICLAW_GLOBAL_CONFIG_PATH:-}"
+company_workspace_root="${OMNICLAW_COMPANY_WORKSPACE_ROOT:-}"
+database=""
+workflow_file=""
+initiator_workspace=""
 request_file=""
 nanobot_bin="nanobot"
 scan_limit="200"
@@ -46,6 +51,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --kernel-url)
       kernel_url="$2"
+      shift 2
+      ;;
+    --company)
+      company="$2"
+      shift 2
+      ;;
+    --global-config-path)
+      global_config_path="$2"
       shift 2
       ;;
     --database)
@@ -70,6 +83,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --scan-limit)
       scan_limit="$2"
+      shift 2
+      ;;
+    --company-workspace-root)
+      company_workspace_root="$2"
       shift 2
       ;;
     --skip-agent-runs)
@@ -99,6 +116,28 @@ fi
 if ! [[ "$scan_limit" =~ ^[0-9]+$ ]]; then
   echo "--scan-limit must be an integer" >&2
   exit 1
+fi
+
+if [[ -z "$company_workspace_root" ]]; then
+  context_cmd=(uv run --project "$ROOT" python "$ROOT/scripts/company/show_company_context.py")
+  if [[ -n "$company" ]]; then
+    context_cmd+=(--company "$company")
+  fi
+  if [[ -n "$global_config_path" ]]; then
+    context_cmd+=(--global-config-path "$global_config_path")
+  fi
+  context_cmd+=(--field workspace_root)
+  company_workspace_root="$("${context_cmd[@]}")"
+fi
+
+if [[ -z "$database" ]]; then
+  database="$company_workspace_root/omniclaw.db"
+fi
+if [[ -z "$workflow_file" ]]; then
+  workflow_file="$company_workspace_root/forms/deploy_new_agent/workflow.json"
+fi
+if [[ -z "$initiator_workspace" ]]; then
+  initiator_workspace="$company_workspace_root/macos"
 fi
 
 declare -A STAGE_DECISIONS=(
@@ -396,7 +435,7 @@ for stage in HR_REVIEW FINANCE_REVIEW DIRECTOR_APPROVAL AGENT_DEPLOYMENT; do
     echo "Stage '$stage' requires a non-empty required_skill" >&2
     exit 1
   fi
-  skill_file="$ROOT/workspace/forms/deploy_new_agent/skills/$required_skill/SKILL.md"
+  skill_file="$company_workspace_root/forms/deploy_new_agent/skills/$required_skill/SKILL.md"
   if [[ ! -f "$skill_file" ]]; then
     echo "Missing master stage skill: $skill_file" >&2
     exit 1
@@ -474,7 +513,7 @@ for ((idx = 0; idx < ${#STAGE_PATH[@]} - 1; idx++)); do
       final_sender_workspace="${NODE_WORKSPACE_BY_NAME[$final_sender_name]}"
     fi
     archive_copy="$final_sender_workspace/outbox/archive/$request_file"
-    backup_glob="$ROOT/workspace/form_archive/deploy_new_agent"
+    backup_glob="$company_workspace_root/form_archive/deploy_new_agent"
     if [[ "$dry_run" -eq 0 ]]; then
       if [[ ! -f "$archive_copy" ]]; then
         echo "Expected archive copy missing: $archive_copy" >&2

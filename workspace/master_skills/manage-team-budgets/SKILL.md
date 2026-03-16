@@ -14,7 +14,7 @@ Use this skill when you manage one or more subordinate agents and need to review
 ## Required Inputs
 
 - running kernel API reachable at `${OMNICLAW_KERNEL_URL:-http://127.0.0.1:8000}`
-- local operators can start OmniClaw with `uv run python main.py`; when the configured LiteLLM proxy URL is local, the proxy is started automatically too
+- local operators can start OmniClaw with `uv run omniclaw`; when the configured LiteLLM proxy URL is local, the proxy is started automatically too
 - your manager node name or ID
 - optional allocation JSON file for direct-report share updates
 - short reason and expected impact text when changing allocations
@@ -40,7 +40,7 @@ Use this skill when you manage one or more subordinate agents and need to review
 
 ## Fallback
 
-- If the command says the kernel is unreachable, ask the operator to start OmniClaw with `uv run python main.py`, then retry.
+- If the command says the kernel is unreachable, ask the operator to start OmniClaw with `uv run omniclaw`, then retry.
 - If the kernel rejects the update, reduce total percentages so they do not exceed `100`.
 - If your direct reports did not receive messages, check their `workspace_root` metadata and rerun the allocation update.
 - If the budget view fails entirely, escalate to the operator with the error and stop manual edits.
