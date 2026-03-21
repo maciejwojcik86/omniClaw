@@ -1,1 +1,0 @@
-Lets work on next Mileston from the plan. Use openspec workflow, lets explore the docs and project status and understand next steps goal. Present me with solid plan and undestanding of next steps and what are you going to do next. I'll provide you with constructive feedback.

@@ -6,8 +6,6 @@ from pathlib import Path
 import re
 from typing import Any
 
-import yaml
-
 
 _DEFAULT_ACCESS_SCOPE = "descendant"
 _SLUG_PATTERN = re.compile(r"[^a-z0-9]+")
@@ -177,6 +175,8 @@ def default_company_entry(*, slug: str, display_name: str, workspace_root: str |
             "ipc_router_scan_interval_seconds": 5,
             "budget_auto_cycle_enabled": True,
             "budget_auto_cycle_poll_interval_seconds": 60,
+            "runtime_retry_scheduler_enabled": True,
+            "runtime_retry_scheduler_poll_interval_seconds": 60,
         },
     )
 
@@ -190,21 +190,6 @@ def slugify_company_slug(raw_value: str) -> str:
     if not normalized:
         raise ValueError("Company slug cannot be empty")
     return normalized
-
-
-def load_legacy_model_catalog(path: str | Path | None) -> list[dict[str, Any]]:
-    if path is None:
-        return []
-    resolved = Path(path).expanduser().resolve()
-    if not resolved.exists():
-        return []
-    payload = yaml.safe_load(resolved.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        return []
-    raw_models = payload.get("models")
-    if not isinstance(raw_models, list):
-        return []
-    return [dict(item) for item in raw_models if isinstance(item, dict)]
 
 
 def _parse_company_entry(slug: str, payload: dict[str, Any]) -> CompanyRegistryEntry:

@@ -1,29 +1,24 @@
-Active implementation change: `none`
+Active implementation change: `m13a-agent-task-retry-hardening`
 
 Implementation focus
 
-1. Keep the repo in the archived M12b state until the next OpenSpec change is selected.
-2. Use the registry-backed local company environment as the baseline for future milestones.
+1. Add canonical persistence for retry schedules and provider/model failure telemetry.
+2. Implement retry classification and progressive backoff helpers before wiring runtime execution paths.
+3. Keep the first implementation slice narrowly scoped to tasks 1.1-1.4, with runtime/scheduler integration deferred to the next slice.
 
 Status
 
-- `m12-nanobot-monorepo-internalization` was archived on 2026-03-16 after its spec sync and validation were complete.
-- `m12b-global-company-registry` was archived on 2026-03-16.
-- OmniClaw now uses one app-level config at `~/.omniClaw/config.json`, with company workspaces reduced to editable assets and per-company runtime state.
-- Root pytest is intentionally scoped to `tests/`; vendored Nanobot upstream tests remain opt-in and should be run from `third_party/nanobot/` with that package's dev extras when needed.
+- OpenSpec artifacts for `m13a-agent-task-retry-hardening` are authored and strictly validated.
+- The repo currently has usage tracking in `agent_llm_calls`, but no canonical persistence for retry state or provider/model failure events.
+- Runtime prompt invocation still fails immediately on upstream errors; deferred retries are not yet implemented.
 
-Archived Outcome
+Planned verification for current slice
 
-- Canonical startup becomes `omniclaw --company <slug-or-display-name>`.
-- Company-wide settings come from the global registry, not from workspace-local `config.json` / `company_config.json`.
-- Workspaces continue to own text assets, forms, skills, templates, archives, logs, and the per-company SQLite DB.
-
-Validation evidence
-
-- `openspec validate --type change m12b-global-company-registry --strict`
-- `PYTEST_ADDOPTS='-s' uv run pytest -q tests` (`101 passed in 185.58s`)
-- `env OMNICLAW_LITELLM_AUTO_START_LOCAL_PROXY=false timeout 10s uv run omniclaw --company omniclaw --host 127.0.0.1 --port 8012` (startup completed; timeout used to stop the server after smoke validation)
+- Alembic head upgrade includes new retry/failure telemetry tables and columns.
+- Repository tests cover persistence of retry records and grouped failure telemetry queries.
+- Retry policy tests cover transient classification, budget-recoverable classification, terminal classification, and deterministic next-attempt scheduling.
 
 Notes
 
-- M12b can keep low-level compatibility paths for tests and migration tooling, but the documented operator contract should move fully to the global company registry.
+- Prefer raw canonical event persistence first; reporting and scheduler processing can build on that state in later tasks.
+- Budget-recoverable scheduling should align to configured reset windows when available, with deterministic next-day fallback otherwise.

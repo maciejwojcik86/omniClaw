@@ -1,6 +1,0 @@
-{
-  "name": "final-agent-signoff",
-  "version": "1.0.0",
-  "description": "Execute DIRECTOR_APPROVAL for deploy_new_agent and choose deployment, rework, or rejection.",
-  "author": "omniclaw-kernel"
-}

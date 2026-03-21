@@ -4,10 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from omniclaw.config import REPO_ROOT, Settings, resolve_company_workspace_root
-
-
-REPO_WORKSPACE_ROOT = (REPO_ROOT / "workspace").resolve()
+from omniclaw.config import Settings, resolve_company_workspace_root
 
 
 @dataclass(frozen=True)
@@ -52,11 +49,6 @@ def build_company_paths(settings: Settings) -> CompanyPaths:
         runtime_packages_root=(root / "runtime_packages").resolve(),
         finances_root=(root / "finances").resolve(),
     )
-
-
-def repo_workspace_root() -> Path:
-    return REPO_WORKSPACE_ROOT
-
 
 def _infer_company_root(settings: Settings) -> Path:
     if settings.company_workspace_root:

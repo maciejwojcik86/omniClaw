@@ -41,6 +41,7 @@ Checkpoint sweep:
 | M12 | `m12-nanobot-monorepo-internalization` | Runtime Packaging | completed | M11b | engineering | Vendored Nanobot runtime, `omniclaw` CLI packaging, and prompt artifact logging work without external checkout coupling |
 | M12b | `m12b-global-company-registry` | Company Config | completed | M12 | engineering | One global OmniClaw config resolves companies by name and owns all company-wide settings |
 | M13 | `m13-constitution-and-sop-pack` | Soft Domain | planned | M12b | engineering | Constitution + SOP pack integrated and usable by agents |
+| M13a | `m13a-agent-task-retry-hardening` | Runtime Resilience | completed | M12b | engineering | Agent task execution survives retryable LLM/API failures through persisted progressive backoff and canonical operator visibility |
 | M14 | `m14-autonomous-e2e-simulation` | MVP Release Gate | planned | M13 | engineering | End-to-end worker budget request/approval loop succeeds |
 | M15 | `m15-matrix-taskforce-workspaces` | Post-MVP | planned | M14 | engineering | Temporary cross-functional workspace provisioning works |
 | M16 | `m16-cross-charge-and-internal-audit` | Post-MVP | planned | M15 | engineering | Cross-charge budget flow + audit workflow operational |
@@ -97,12 +98,12 @@ Verification:
 
 ### M04 - Agent runtime bootstrap (`m04-agent-runtime-bootstrap`)
 Scope:
-- Runtime wrapper for launching Nullclaw under restricted user.
+- Runtime wrapper for launching the configured agent runtime with explicit config/workspace inputs.
 - Runtime gateway control actions (`gateway_start`, `gateway_stop`, `gateway_status`, `list_agents`).
-- Use existing native Nullclaw workspace context files (no M04 prompt seed generation).
+- Use existing native runtime workspace context files (no M04 prompt seed generation).
 - Run metadata capture under drafts output boundary.
 - Canonical DB runtime-state tracking on `nodes` (`gateway_running`, pid, host/port, start/stop timestamps).
-- Register kernel-running Linux user as HUMAN node with workspace inside repo (`workspace/<user>`).
+- Register kernel-running Linux user as HUMAN node with workspace under the selected company workspace root.
 - Enforce AGENT line manager requirement (manager can be HUMAN or AGENT) and support linking manager for existing AGENT rows.
 - Delegated operator SOP via runtime-control skill (`.codex/skills/runtime-gateway-control`).
 
@@ -155,7 +156,7 @@ Scope:
 - Add kernel-managed routed frontmatter `stage_skill` metadata (`""` at terminal no-holder stage).
 - Standardize workspace form stage skill naming to hyphen convention.
 - Add deterministic integration coverage and operator live-smoke runbook assets.
-- Keep deployment action execution stage-owned (`deploy-new-claw-agent`), no kernel auto-provision trigger at approval edge.
+- Keep deployment action execution stage-owned (`deploy-new-nanobot`), no kernel auto-provision trigger at approval edge.
 
 Acceptance criteria:
 - `stage_skill` present/correct on routed hops and empty on terminal archive.
@@ -165,10 +166,10 @@ Acceptance criteria:
 
 ### M07b - Nanobot runtime migration (`m07b-nanobot-runtime-migration`)
 Scope:
-- Replace Nullclaw as the canonical AGENT runtime with Nanobot.
-- Move AGENT provisioning from per-agent Linux users to repo-local directories under `workspace/agents/<agent_name>/`.
-- Migrate runtime metadata away from `nullclaw_config_path` and cross-user launch assumptions toward canonical Nanobot config/workspace inputs.
-- Rewrite canonical deployment assets around `deploy-new-nanobot` while keeping `deploy-new-claw-agent` as an optional legacy path.
+- Establish Nanobot as the canonical AGENT runtime.
+- Move AGENT provisioning from per-agent Linux users to company-workspace directories under `<company-workspace-root>/agents/<agent_name>/`.
+- Normalize runtime metadata around canonical Nanobot config/workspace inputs.
+- Rewrite canonical deployment assets around `deploy-new-nanobot`.
 
 Acceptance criteria:
 - AGENT nodes can be provisioned without creating dedicated Linux users.
@@ -179,8 +180,8 @@ Acceptance criteria:
 - `openspec validate --type change m07b-nanobot-runtime-migration --strict`
 
 Implementation notes:
-- Alembic revision `20260306_0010` renames `nodes.nullclaw_config_path` to `nodes.runtime_config_path`.
-- Canonical AGENT directories now live at `workspace/agents/<agent_name>/{config.json,workspace/}`.
+- Alembic revision `20260306_0010` renames the legacy runtime-config column to `nodes.runtime_config_path`.
+- Canonical AGENT directories now live at `<company-workspace-root>/agents/<agent_name>/{config.json,workspace/}`.
 - Verified CLI contract: `nanobot gateway` and `nanobot agent` accept explicit `-w/--workspace` and `-c/--config`; `nanobot status` still reports the default home instance only.
 
 ### M07c - Routed form agent hints (`m07c-routed-form-agent-hints`)
@@ -327,9 +328,9 @@ Acceptance criteria:
 Implementation notes:
 - Treat this as one company workspace per kernel process, not multi-tenant execution inside a shared process.
 - Preserve familiar subroot names where practical (`agents/`, `forms/`, `master_skills/`, `nanobots_instructions/`, `nanobot_workspace_templates/`, `form_archive/`) to reduce migration churn.
-- M12b later removed workspace-local company settings files from the runtime path; the repo-local `workspace/company_config.json` path remains migration/bootstrap input only.
+- M12b removed workspace-local company settings files from the runtime path; company settings now come from the global registry, with explicit config-path overrides kept only as low-level compatibility inputs for tests and recovery tooling.
 - `src/omniclaw/company_paths.py` is the shared root/subpath resolver for runtime modules and scripts.
-- `scripts/company/bootstrap_company_workspace.py` scaffolds fresh company roots; `scripts/company/migrate_repo_workspace.py` handles copy/move migration from the legacy repo-local workspace and rewrites persisted paths.
+- `scripts/company/bootstrap_company_workspace.py` and `scripts/company/migrate_repo_workspace.py` are retired fail-fast entrypoints that point operators at `docs/company-workspace-requirements.md`.
 - Local developer state has already been migrated into `/home/macos/.omniClaw/workspace`, with company settings now stored in `/home/macos/.omniClaw/config.json` and the per-company SQLite database kept inside the workspace.
 
 Verification:
@@ -461,16 +462,16 @@ Acceptance criteria:
 - 2026-03-01: Merged former `docs/master-task-list.md` into `docs/plan.md` to keep one canonical planning source.
 - 2026-03-01: Adopted mandatory skill-first modular provisioning workflow; added project-local skills and helper scripts for user creation, workspace scaffold, and permission policy.
 - 2026-03-01: Added privileged provisioning helper allowlist pattern and system adapter helper integration for endpoint-driven host actions with SQLite node tracking.
-- 2026-03-01: Consolidated provisioning skills into `.codex/skills/deploy-new-claw-agent` and added `scripts/provisioning/list_agents_permissions.py` audit report script.
+- 2026-03-01: Consolidated provisioning guidance into a deployment skill and added `scripts/provisioning/list_agents_permissions.py` audit report script.
 - 2026-03-01: Verified real system provisioning flow end-to-end (Linux user `agent_director_01`, workspace scaffold, permissions, and SQLite node tracking) via `/v1/provisioning/actions`.
 - 2026-03-01: Archived OpenSpec change `m03-linux-provisioning` as `2026-03-01-m03-linux-provisioning`; M03 marked complete.
-- 2026-03-01: Created active change `m04-agent-runtime-bootstrap` and authored proposal/spec/design/tasks with launch strategy options and pending Nullclaw command-contract inputs.
-- 2026-03-01: Aligned M04 and provisioning workflow paths with Nullclaw defaults: config at `~/.nullclaw/config.json` and workspace at `~/.nullclaw/workspace`.
+- 2026-03-01: Created active change `m04-agent-runtime-bootstrap` and authored proposal/spec/design/tasks with launch strategy options and pending runtime command-contract inputs.
+- 2026-03-01: Aligned M04 and provisioning workflow paths with the then-current per-user runtime-home defaults for config and workspace resolution.
 - 2026-03-01: Added Alembic revision `20260301_0002` to track agent runtime metadata in `nodes` (`linux_username`, `linux_password_hash`, workspace root, config path, and primary model) and added `.codex/skills/alembic-migration-ops`.
 - 2026-03-01: Added Alembic revision `20260301_0003` to rename `linux_password_hash` to `linux_password` (plaintext reference) and enforce one line manager per child node (`uq_hierarchy_child_manager`).
-- 2026-03-01: Updated deploy workflow for shared Nullclaw binaries: one root-managed install under `/opt/omniclaw` plus per-user symlink linking in `~/.local/bin/nullclaw`.
-- 2026-03-01: Added troubleshooting SOPs to deploy/runtime skills and introduced `scripts/provisioning/sync_nullclaw_auth.sh` to resolve `AllProvidersFailed` caused by missing per-user auth context.
-- 2026-03-03: Refined M04 scope to remove prompt-seed creation and rely on native Nullclaw context files (`AGENTS.md`, `SOUL.md`, `USER.md`, etc.); deferred formal prompt-definition/onboarding-skill work to later milestone backlog.
+- 2026-03-01: Updated the legacy shared-runtime deployment workflow around one root-managed install under `/opt/omniclaw` plus per-user symlink linking in `~/.local/bin/`.
+- 2026-03-01: Added troubleshooting SOPs to deploy/runtime skills and introduced a legacy auth-sync helper to resolve `AllProvidersFailed` caused by missing per-user auth context.
+- 2026-03-03: Refined M04 scope to remove prompt-seed creation and rely on native runtime context files (`AGENTS.md`, `SOUL.md`, `USER.md`, etc.); deferred formal prompt-definition/onboarding-skill work to later milestone backlog.
 - 2026-03-03: Implemented M04 runtime control surface (`/v1/runtime/actions`) with gateway start/stop/status/list, metadata capture under `drafts/runtime/runs`, Alembic revision `20260303_0004` for node gateway-state fields, smoke scripts under `scripts/runtime/`, and new delegated runtime SOP skill `.codex/skills/runtime-gateway-control`.
 - 2026-03-03: Extended M04 provisioning baseline with `register_human` and `set_line_manager` actions; enforced manager requirement on `provision_agent` (manager node can be HUMAN or AGENT); added one-time HUMAN supervisor bootstrap (`workspace/macos`) and linked `Macos_Supervisor` -> `Director_01` in SQLite hierarchy.
 - 2026-03-03: Archived OpenSpec change `m04-agent-runtime-bootstrap` as `2026-03-03-m04-agent-runtime-bootstrap`; M04 marked complete and ready to hand off to M05 planning.
@@ -483,8 +484,8 @@ Acceptance criteria:
 - 2026-03-03: Refined M06 holder/routing semantics: MESSAGE routing now allows any registered target node, built-in `message` lifecycle uses `WAITING_TO_BE_READ -> ARCHIVED` via explicit read acknowledgement, and workflow edges now support deterministic named-holder (`static_node_name`) plus terminal no-holder (`none`) decisions.
 - 2026-03-03: Removed runtime graph overwrite for `message` form type: IPC now resolves lifecycle behavior from active `form_types` definition/version, bootstrap-seeding defaults only when no `message` definition exists; added regression test proving custom active `message` workflow drives status decisions.
 - 2026-03-03: Simplified message transport failure handling: removed dead-letter routing mutations from IPC scan path; undelivered files remain in `outbox/send` with explicit failure reason in scan output while canonical lifecycle DB writes occur only for successful deliveries.
-- 2026-03-03: Added configurable deployment-approval form example `nullclaw_agent_deployment_request_form` (requester draft -> human review -> reject loop/resubmit or terminal approval), shipped requester/reviewer stage skills with templates, added canonical form definitions under `forms/`, and added integration test coverage for submit/reject/resubmit/approve holder decisions.
-- 2026-03-03: Added operator smoke runner `scripts/forms/smoke_nullclaw_agent_deployment_request.sh` to execute end-to-end deployment-request lifecycle (upsert/validate/activate/create/submit/reject/resubmit/approve) in dry-run or apply mode.
+- 2026-03-03: Added a configurable deployment-approval form example (requester draft -> human review -> reject loop/resubmit or terminal approval), shipped requester/reviewer stage skills with templates, added canonical form definitions under `forms/`, and added integration test coverage for submit/reject/resubmit/approve holder decisions.
+- 2026-03-03: Added an operator smoke runner to execute the end-to-end deployment-request lifecycle (upsert/validate/activate/create/submit/reject/resubmit/approve) in dry-run or apply mode.
 - 2026-03-03: Executed live apply-mode deployment-request smoke against local kernel (`Director_01` requester, `Macos_Supervisor` reviewer); confirmed terminal form snapshot `APPROVED_FOR_DEPLOYMENT` with `current_holder_node=NULL` and 5 append-only decision events in `form_transition_events`.
 - 2026-03-03: Adopted node-centric workflow schema for forms (`start_node`, `end_node`, per-node `status`/`stage_skill_ref`/`holder`, decision edges), kept legacy graph compatibility for existing records, moved approved form definition payloads to repository-root `forms/`, and removed stale `scripts/forms/examples/` JSON files.
 - 2026-03-04: Refocused M06 on form-centric IPC routing (`scan_forms` primary, `scan_messages` alias), where `message` is a normal form type. IPC now routes by `workflow_graph.stages`, supports dynamic targets (`{{initiator}}`, `{{any}}`, `{{var}}`), writes backup copies to `workspace/form_archive/`, and distributes required stage skills from `workspace/forms/<form_type>/skills/<required_skill>/`.
@@ -494,11 +495,11 @@ Acceptance criteria:
 - 2026-03-04: Added kernel lifespan IPC auto-scan loop (default enabled, 5s interval) that executes the same routing path as `scan_forms`; confirmed live routing of `workspace/macos/outbox/send/2026-03-04-macos-director-routing-smoke.md` to `Director_01`.
 - 2026-03-04: Updated `message` read-stage workflow back to explicit `WAITING_TO_BE_READ -> ARCHIVED` acknowledge decision and replaced read-stage SOP with single script tool `acknowledge_and_archive_message.py` (endpoint call + frontmatter stage update + unread->read move + master archive copy). Hardened `sync_form_types_from_workspace.py` prune logic to preserve versions still referenced by `forms_ledger`.
 - 2026-03-05: Archived change `m06-forms-ledger-state-machine` as `2026-03-05-m06-forms-ledger-state-machine` (spec sync was skipped during archive due delta header mismatch in upstream OpenSpec auto-sync).
-- 2026-03-06: Created active change `m07b-nanobot-runtime-migration` after deciding to replace the Nullclaw + per-agent Linux-user model with Nanobot repo-local agent directories. Repo review identified the main impact in node runtime metadata, provisioning/runtime services, deploy-stage skill packages, and operator/reference documentation.
+- 2026-03-06: Created active change `m07b-nanobot-runtime-migration` after deciding to replace the prior per-agent Linux-user runtime model with Nanobot company-workspace agent directories. Repo review identified the main impact in node runtime metadata, provisioning/runtime services, deploy-stage skill packages, and operator/reference documentation.
 - 2026-03-06: Implemented the Nanobot schema/runtime pivot core: renamed node runtime metadata to `runtime_config_path`, moved AGENT provisioning to repo-local `workspace/agents/<agent_name>/workspace`, and added Nanobot config scaffolding with targeted schema/runtime/provisioning tests passing (`20 passed`).
-- 2026-03-06: Switched the canonical `deploy_new_agent` stage skill to `deploy-new-nanobot`, rewrote the Nanobot deployment skill package, and retargeted the deploy smoke runner to explicit `nanobot agent/gateway -w -c` invocations instead of Linux-user `nullclaw` execution.
-- 2026-03-06: Implemented the core M07b schema/runtime pivot: `runtime_config_path` replaced `nullclaw_config_path`, AGENT provisioning now scaffolds repo-local Nanobot directories under `workspace/agents/<agent_name>/`, gateway commands use explicit Nanobot `--workspace/--config` inputs, and Alembic migration `20260306_0010` preserves existing config-path data.
-- 2026-03-06: Rewrote the canonical `deploy-new-nanobot` stage skill, added `scripts/provisioning/deploy_new_nanobot_agent.sh`, updated deploy workflow/IPC tests to target `deploy-new-nanobot`, and retargeted the deploy smoke runner away from `sudo -u ... nullclaw`.
+- 2026-03-06: Switched the canonical `deploy_new_agent` stage skill to `deploy-new-nanobot`, rewrote the Nanobot deployment skill package, and retargeted the deploy smoke runner to explicit `nanobot agent/gateway -w -c` invocations instead of Linux-user runtime execution.
+- 2026-03-06: Implemented the core M07b schema/runtime pivot: `runtime_config_path` became the canonical node runtime metadata, AGENT provisioning now scaffolds Nanobot directories under the company workspace `agents/<agent_name>/`, gateway commands use explicit Nanobot `--workspace/--config` inputs, and Alembic migration `20260306_0010` preserves existing config-path data.
+- 2026-03-06: Rewrote the canonical `deploy-new-nanobot` stage skill, added `scripts/provisioning/deploy_new_nanobot_agent.sh`, updated deploy workflow/IPC tests to target `deploy-new-nanobot`, and retargeted the deploy smoke runner away from the legacy Linux-user launch path.
 - 2026-03-06: Reprovisioned the canonical sample agents (`Director_01`, `HR_Head_01`, `Ops_Head_01`) into `workspace/agents/...`, synced the active `deploy_new_agent` workflow from workspace so `deploy-new-nanobot` is the routed stage skill, fixed Nanobot deploy/smoke helper gaps (`init_nanobot_config.py` import bootstrap, local workspace scaffold creation, final archive assertions), and completed an apply-mode deploy smoke against the repo-local Nanobot directories.
 - 2026-03-06: Archived `m07b-nanobot-runtime-migration` as `2026-03-06-m07b-nanobot-runtime-migration`, synced delta specs into the main OpenSpec tree (`agent-runtime-bootstrap`, `linux-provisioning`, `deploy-new-agent-workflow`), reran strict validation, and reconfirmed local reprovisioning by recreating `Signal_Cartographer_01` through the live kernel endpoint with a successful Nanobot `hello` smoke.
 - 2026-03-05: Implemented hardening change `hardening-runtime-ipc-core`: strict runtime host validation, safer gateway command rendering, bounded IPC scan traversal with event-loop offload, `forms_ledger.version` optimistic lock migration (`20260305_0008`), deterministic transition conflict mapping, and startup migration-head enforcement (no runtime `create_all` path). Regression suite updated and passing (`46 passed`).
@@ -514,3 +515,13 @@ Acceptance criteria:
 - 2026-03-08: Applied runtime hardening after live budget-lookup failures: fixed the UTC reset-time comparison in `BudgetEngine.due_cycle_date`, changed `main.py` to avoid duplicate app imports and to auto-start a loopback-configured LiteLLM proxy, and taught the budget helper/manager skill docs to emit a direct `uv run omniclaw` recovery path when the kernel is down.
 - 2026-03-08: Hardened live manager budget operations after reproducing Director allocation failures. `BudgetAllocationInput` now accepts alias fields used by agents/operators (`agent_name`, `node_id`, `share_percent`), the trigger helper prints kernel 4xx bodies, and budget recomputation no longer fails closed when LiteLLM `/user/update` is unavailable; those provider issues are returned in `sync_errors` while the kernel-side allocation update still succeeds.
 - 2026-03-15: Implemented active change `m12-nanobot-monorepo-internalization`. Vendored the customized Nanobot runtime into `third_party/nanobot/`, exposed the packaged `omniclaw` CLI, removed correctness-critical external checkout coupling from runtime launch, added OmniClaw-only prompt payload artifact logging, scoped root pytest to `tests/`, and validated with installer smoke plus `uv run pytest -q tests` (`101 passed`) and strict OpenSpec validation.
+- 2026-03-18: Opened change `m13a-agent-task-retry-hardening` to harden agent task execution against retryable LLM/API failures. Authored proposal, design, specs, and tasks covering persisted retry state, progressive backoff up to long-delay windows, runtime/scheduler integration, and canonical operator visibility; strict OpenSpec validation passed.
+- 2026-03-19: Completed the first M13a implementation slice. Added retry policy helpers (`transient`, `budget_recoverable`, `terminal`), canonical persistence tables for `agent_task_retries` and `agent_llm_failure_events`, repository helpers for retry/failure telemetry, Alembic revision `20260319_0015`, targeted tests (`17 passed`), and a new developer skill `.codex/skills/llm-retry-observability`.
+- 2026-03-19: Investigated a migration-path bug discovered during M13a validation. Root cause: `alembic.ini` still pointed at legacy repo-local `sqlite:///./workspace/omniclaw.db` while registry-backed runtime config had moved the canonical DB to `~/.omniClaw/workspace/omniclaw.db`. Fixed `alembic/env.py` so Alembic now resolves the default DB through OmniClaw settings/registry and verified `uv run alembic upgrade head` reaches `20260319_0015 (head)` on the real registry-backed DB.
+- 2026-03-20: Completed M13a task 2.1. Runtime `invoke_prompt` now classifies system-mode LLM/API failures, persists retry rows and failure events, and returns a canonical `deferred_retry` response for retryable failures instead of only raising a generic immediate error. Added regression coverage in `tests/test_runtime_actions.py`.
+- 2026-03-20: Completed M13a task 2.2. Added a kernel-managed retry scheduler path with `process_due_retries`, repository claim/update helpers, app lifespan polling loop, and regression coverage proving due retries are claimed once and resumed without duplicate execution.
+- 2026-03-20: Completed M13a task 2.3. Runtime run metadata now records invocation outcome details for completed, deferred-retry, and terminal-failure cases, including retry classification and next-attempt data where applicable. Added regression coverage for success, deferred retry, and terminal failure metadata artifacts.
+- 2026-03-20: Completed M13a tasks 3.1 and 3.2. Added canonical usage/reporting endpoints for retry-state inspection (`/v1/usage/retries`) and grouped provider/model failure trends (`/v1/usage/failure-trends`), with route-level coverage validating pending retry visibility and cross-agent provider/model aggregation.
+- 2026-03-20: Completed M13a task 3.3. Added runtime actions `retry_now` and `cancel_retry`, extended the canonical runtime trigger wrapper for task-key based retry control, added `scripts/runtime/retry_control.sh`, and validated both API and dry-run script flows.
+- 2026-03-20: Completed M13a tasks 3.4 and 4.x closure. Documented retry lifecycle and operator workflows, added usage helper wrappers for retry state and failure trends, expanded script-level regression coverage, and finished the targeted validation sweep (`31 passed`) with strict OpenSpec validation passing.
+- 2026-03-20: Archived `m13a-agent-task-retry-hardening` as `openspec/changes/archive/2026-03-20-m13a-agent-task-retry-hardening`. Archive updated canonical specs for runtime bootstrap, retry policy, and workflow verification surfaces.

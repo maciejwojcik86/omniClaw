@@ -12,8 +12,9 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from omniclaw.config import Settings
-from omniclaw.db.models import Node
+from omniclaw.db.models import AgentTaskRetry, Node
 from omniclaw.db.repository import KernelRepository
+from omniclaw.runtime.retry_policy import RetryFailureClass, classify_llm_failure, compute_retry_decision
 from omniclaw.runtime.schemas import RuntimeActionRequest
 from omniclaw.runtime_integration import (
     DEFAULT_RUNTIME_INTEGRATION_FACTORY,
@@ -45,6 +46,13 @@ class RuntimeService:
                 "action": request.action,
                 "agents": [self._serialize_node(node) for node in self._repository.list_agent_nodes()],
             }
+
+        if request.action == "process_due_retries":
+            return self._process_due_retries()
+        if request.action == "retry_now":
+            return self._retry_now(request)
+        if request.action == "cancel_retry":
+            return self._cancel_retry(request)
 
         node = self._resolve_agent_node(request)
 
@@ -393,6 +401,11 @@ class RuntimeService:
                 stdout=stdout,
                 stderr="",
                 artifact_paths=artifact_paths,
+                invocation_metadata={
+                    "status": "completed",
+                    "session_key": request.session_key,
+                    "retry": None,
+                },
             )
             refreshed_node = self._repository.get_agent_node(node_id=node.id)
             return {
@@ -426,14 +439,22 @@ class RuntimeService:
             stdout=process.stdout,
             stderr=process.stderr,
             artifact_paths=artifact_paths,
+            invocation_metadata={
+                "status": "completed" if process.returncode == 0 else "failed",
+                "session_key": request.session_key,
+                "retry": None,
+            },
         )
         if process.returncode != 0:
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    "Prompt invocation failed: "
-                    f"exit_code={process.returncode}, stderr={self._trim_output(process.stderr)}"
-                ),
+            return self._handle_failed_prompt_invocation(
+                node=node,
+                request=request,
+                command=command,
+                process=process,
+                started_at=started_at,
+                finished_at=finished_at,
+                artifact_paths=artifact_paths,
+                metadata_path=metadata_path,
             )
         return {
             "action": "invoke_prompt",
@@ -690,6 +711,7 @@ class RuntimeService:
         stdout: str,
         stderr: str,
         artifact_paths: dict[str, str],
+        invocation_metadata: dict[str, object] | None = None,
     ) -> Path:
         output_root = Path(artifact_paths["output_root"]).expanduser().resolve()
         try:
@@ -713,8 +735,252 @@ class RuntimeService:
             "stderr": self._trim_output(stderr),
             "artifact_paths": artifact_paths,
         }
+        if invocation_metadata:
+            metadata["invocation"] = invocation_metadata
         metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
         return metadata_path
+
+    def _retry_now(self, request: RuntimeActionRequest) -> dict[str, object]:
+        task_key = (request.task_key or "").strip()
+        if not task_key:
+            raise HTTPException(status_code=422, detail="task_key is required for retry_now")
+        record = self._repository.get_agent_task_retry(task_key=task_key)
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"Retry task '{task_key}' not found")
+        updated = self._repository.update_agent_task_retry_status(
+            task_key=task_key,
+            status="pending",
+            next_attempt_at=datetime.now(timezone.utc),
+            claimed_at=None,
+            completed_at=None,
+        )
+        assert updated is not None
+        return {
+            "action": "retry_now",
+            "retry": {
+                "task_key": updated.task_key,
+                "status": updated.status,
+                "next_attempt_at": updated.next_attempt_at.isoformat() if updated.next_attempt_at else None,
+            },
+        }
+
+    def _cancel_retry(self, request: RuntimeActionRequest) -> dict[str, object]:
+        task_key = (request.task_key or "").strip()
+        if not task_key:
+            raise HTTPException(status_code=422, detail="task_key is required for cancel_retry")
+        record = self._repository.get_agent_task_retry(task_key=task_key)
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"Retry task '{task_key}' not found")
+        updated = self._repository.update_agent_task_retry_status(
+            task_key=task_key,
+            status="cancelled",
+            next_attempt_at=None,
+            claimed_at=None,
+            completed_at=datetime.now(timezone.utc),
+        )
+        assert updated is not None
+        return {
+            "action": "cancel_retry",
+            "retry": {
+                "task_key": updated.task_key,
+                "status": updated.status,
+                "completed_at": updated.completed_at.isoformat() if updated.completed_at else None,
+            },
+        }
+
+    def _process_due_retries(self) -> dict[str, object]:
+        due_before = datetime.now(timezone.utc)
+        due_records = self._repository.list_due_agent_task_retries(due_before=due_before)
+        processed: list[dict[str, object]] = []
+
+        for record in due_records:
+            claimed = self._repository.claim_agent_task_retry(task_key=record.task_key, claimed_at=due_before)
+            if claimed is None:
+                continue
+
+            node = self._repository.get_agent_node(node_id=claimed.node_id)
+            if node is None:
+                self._repository.update_agent_task_retry_status(
+                    task_key=claimed.task_key,
+                    status="terminal",
+                    claimed_at=due_before,
+                    completed_at=due_before,
+                    last_error_message="agent node not found for retry",
+                )
+                processed.append({
+                    "task_key": claimed.task_key,
+                    "status": "terminal",
+                    "reason": "node_not_found",
+                })
+                continue
+
+            if not claimed.last_error_message and not claimed.request_payload_json:
+                self._repository.update_agent_task_retry_status(
+                    task_key=claimed.task_key,
+                    status="terminal",
+                    claimed_at=due_before,
+                    completed_at=due_before,
+                    last_error_message="cannot resume retry without original request payload or error context",
+                )
+                processed.append({
+                    "task_key": claimed.task_key,
+                    "status": "terminal",
+                    "reason": "missing_resume_payload",
+                })
+                continue
+
+            retry_request = self._build_retry_request(node=node, record=claimed)
+            result = self._invoke_prompt(node=node, request=retry_request)
+            invocation = result.get("invocation", {}) if isinstance(result, dict) else {}
+            status = invocation.get("status")
+            if status == "completed":
+                self._repository.update_agent_task_retry_status(
+                    task_key=claimed.task_key,
+                    status="completed",
+                    claimed_at=claimed.claimed_at,
+                    completed_at=datetime.now(timezone.utc),
+                    next_attempt_at=None,
+                )
+            elif status == "deferred_retry":
+                self._repository.update_agent_task_retry_status(
+                    task_key=claimed.task_key,
+                    status="pending",
+                    claimed_at=None,
+                )
+            processed.append(
+                {
+                    "task_key": claimed.task_key,
+                    "status": status,
+                    "node_id": claimed.node_id,
+                    "session_key": claimed.session_key,
+                }
+            )
+
+        return {
+            "action": "process_due_retries",
+            "processed_count": len(processed),
+            "processed": processed,
+            "due_before": due_before.isoformat(),
+        }
+
+    def _handle_failed_prompt_invocation(
+        self,
+        *,
+        node: Node,
+        request: RuntimeActionRequest,
+        command: str,
+        process: subprocess.CompletedProcess[str],
+        started_at: datetime,
+        finished_at: datetime,
+        artifact_paths: dict[str, str],
+        metadata_path: Path,
+    ) -> dict[str, object]:
+        error_message = self._build_failure_message(process=process)
+        failure_class = classify_llm_failure(error_message)
+        task_key = self._build_task_key(node=node, request=request)
+        retry_record = None
+        retry_payload = None
+        failure_event_written = False
+
+        if failure_class != RetryFailureClass.TERMINAL:
+            existing = self._repository.get_agent_task_retry(task_key=task_key)
+            prior_attempts = existing.attempt_count if existing is not None else 0
+            decision = compute_retry_decision(
+                attempt_count=prior_attempts,
+                failure_class=failure_class,
+                reset_time_utc=self._company_reset_time_utc(),
+                now=finished_at,
+            )
+            retry_record = self._repository.upsert_agent_task_retry(
+                node_id=node.id,
+                task_key=task_key,
+                session_key=request.session_key,
+                provider=self._provider_for_node(node),
+                model=node.primary_model,
+                failure_class=failure_class,
+                status="pending" if decision.retryable else "exhausted",
+                attempt_count=prior_attempts + 1,
+                max_attempts=decision.max_attempts,
+                next_attempt_at=decision.next_attempt_at,
+                request_payload_json=self._serialize_retry_request_payload(request=request),
+                last_error_message=error_message,
+                last_run_id=metadata_path.stem,
+                completed_at=None if decision.retryable else finished_at,
+            )
+            self._repository.insert_llm_failure_event(
+                node_id=node.id,
+                task_retry_id=retry_record.id,
+                session_key=request.session_key,
+                task_key=task_key,
+                provider=self._provider_for_node(node),
+                model=node.primary_model,
+                failure_class=failure_class,
+                error_message=error_message,
+                occurred_at=finished_at,
+            )
+            failure_event_written = True
+            retry_payload = {
+                "retry_record_id": retry_record.id,
+                "task_key": retry_record.task_key,
+                "failure_class": failure_class.value,
+                "attempt_count": retry_record.attempt_count,
+                "max_attempts": retry_record.max_attempts,
+                "next_attempt_at": retry_record.next_attempt_at.isoformat() if retry_record.next_attempt_at else None,
+            }
+            if decision.retryable:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                metadata["invocation"] = {
+                    "status": "deferred_retry",
+                    "session_key": request.session_key,
+                    "retry": retry_payload,
+                    "failure_class": failure_class.value,
+                    "error": error_message,
+                }
+                metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+                return {
+                    "action": "invoke_prompt",
+                    "node": self._serialize_node(node),
+                    "invocation": {
+                        "status": "deferred_retry",
+                        "session_key": request.session_key,
+                        "prompt": request.prompt,
+                        "reply": None,
+                        "exit_code": process.returncode,
+                        "command": command,
+                        "error": error_message,
+                        "artifact_paths": {**artifact_paths, "run_metadata": str(metadata_path)},
+                        "retry": retry_payload,
+                    },
+                }
+
+        if not failure_event_written:
+            self._repository.insert_llm_failure_event(
+                node_id=node.id,
+                task_retry_id=retry_record.id if retry_record is not None else None,
+                session_key=request.session_key,
+                task_key=task_key,
+                provider=self._provider_for_node(node),
+                model=node.primary_model,
+                failure_class=failure_class,
+                error_message=error_message,
+                occurred_at=finished_at,
+            )
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        metadata["invocation"] = {
+            "status": "terminal_failure",
+            "session_key": request.session_key,
+            "retry": retry_payload,
+            "failure_class": failure_class.value,
+            "error": error_message,
+        }
+        metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Prompt invocation failed: "
+                f"exit_code={process.returncode}, classification={failure_class.value}, stderr={self._trim_output(process.stderr)}"
+            ),
+        )
 
     def _record_mock_usage(
         self,
@@ -788,6 +1054,80 @@ class RuntimeService:
             "remaining_budget_usd": float(max(budget.daily_limit_usd - budget.current_spend, 0)) if budget and budget.budget_mode.value == "metered" else None,
             "has_virtual_api_key": bool(budget and budget.virtual_api_key),
         }
+
+    def _build_failure_message(self, *, process: subprocess.CompletedProcess[str]) -> str:
+        stderr = self._trim_output(process.stderr)
+        stdout = self._trim_output(process.stdout)
+        if stderr and stdout:
+            return f"{stderr} | stdout={stdout}"
+        if stderr:
+            return stderr
+        if stdout:
+            return stdout
+        return f"runtime exited with code {process.returncode}"
+
+    def _build_task_key(self, *, node: Node, request: RuntimeActionRequest) -> str:
+        return f"invoke_prompt:{node.id}:{request.session_key}"
+
+    def _build_retry_request(self, *, node: Node, record: AgentTaskRetry) -> RuntimeActionRequest:
+        payload = self._deserialize_retry_request_payload(record.request_payload_json)
+        if payload is not None:
+            return RuntimeActionRequest(
+                action="invoke_prompt",
+                node_id=node.id,
+                session_key=str(payload.get("session_key") or record.session_key or "cli:retry"),
+                prompt=str(payload["prompt"]),
+                markdown=bool(payload.get("markdown", False)),
+                include_logs=bool(payload.get("include_logs", False)),
+            )
+        return RuntimeActionRequest(
+            action="invoke_prompt",
+            node_id=node.id,
+            session_key=record.session_key or "cli:retry",
+            prompt=(
+                f"Retry previously failed task '{record.task_key}'. "
+                f"Original failure: {record.last_error_message}"
+            ),
+        )
+
+    def _serialize_retry_request_payload(self, *, request: RuntimeActionRequest) -> str:
+        return json.dumps(
+            {
+                "prompt": request.prompt,
+                "session_key": request.session_key,
+                "markdown": request.markdown,
+                "include_logs": request.include_logs,
+            },
+            sort_keys=True,
+        )
+
+    def _deserialize_retry_request_payload(self, raw_payload: str | None) -> dict[str, object] | None:
+        if not raw_payload:
+            return None
+        try:
+            payload = json.loads(raw_payload)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        prompt = payload.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            return None
+        return payload
+
+    def _provider_for_node(self, node: Node) -> str | None:
+        primary_model = (node.primary_model or "").strip()
+        if not primary_model:
+            return None
+        if "/" in primary_model:
+            return primary_model.split("/", 1)[0]
+        return primary_model
+
+    def _company_reset_time_utc(self) -> str | None:
+        budgeting = self._settings.company_section("budgeting")
+        raw = budgeting.get("reset_time_utc") if isinstance(budgeting, dict) else None
+        text = str(raw).strip() if raw is not None else ""
+        return text or None
 
     def _first_line(self, value: str) -> str:
         for line in value.splitlines():

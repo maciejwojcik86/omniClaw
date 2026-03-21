@@ -77,6 +77,8 @@ def test_alembic_upgrade_creates_canonical_tables(tmp_path: Path) -> None:
         "master_skills",
         "node_skill_assignments",
         "agent_llm_calls",
+        "agent_task_retries",
+        "agent_llm_failure_events",
         "agent_session_exports",
     }.issubset(tables)
 
@@ -144,6 +146,13 @@ def test_alembic_upgrade_creates_canonical_tables(tmp_path: Path) -> None:
         "rollover_reserve_usd",
         "review_required_at",
     }.issubset(budget_columns)
+
+    retry_columns = {column["name"] for column in inspector.get_columns("agent_task_retries")}
+    assert {
+        "request_payload_json",
+        "last_error_message",
+        "next_attempt_at",
+    }.issubset(retry_columns)
 
 
 def test_alembic_renames_runtime_config_column_without_data_loss(tmp_path: Path) -> None:

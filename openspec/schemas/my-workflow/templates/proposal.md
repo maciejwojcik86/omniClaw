@@ -18,6 +18,25 @@
      Use existing spec names from openspec/specs/. Leave empty if no requirement changes. -->
 - `<existing-name>`: <what requirement is changing>
 
+## Git / Change Boundary Review
+
+<!-- Mandatory before implementation starts and again before archive.
+Record the real repo state instead of assuming a clean worktree. -->
+
+### Starting Git State
+- `git status --short` summary:
+- Is the repo already dirty before this change? `yes/no`
+- If yes, list unrelated or pre-existing modified areas:
+
+### Intended Change Boundary
+- Files/directories expected to change for this OpenSpec change:
+- Files/directories explicitly out of scope:
+
+### Commit / Push Expectation
+- Expected commit strategy for this change:
+- Should archive happen only after commit? `yes/no`
+- Should push happen as part of closure? `yes/no`
+
 ## Impact
 
 <!-- Affected code, APIs, dependencies, systems -->

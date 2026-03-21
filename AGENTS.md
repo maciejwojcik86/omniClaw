@@ -6,12 +6,11 @@ OmniClaw builds a kernel that orchestrates Nanobot agents from one selected comp
 ## Skill-First Development Paradigm (Mandatory)
 - Prefer modular, single-responsibility implementation steps over monolithic A-to-Z scripts.
 
-## Skill Namespace Distinction And Mirroring Contract (Mandatory)
+## Skill Separation And Capture Contract (Mandatory)
 - There are two distinct skill families in this repo and they must not be conflated:
-  - Developer/copilot skills live in `.codex/skills/` and mirrored `skills/`. These are for repo development by Codex CLI and nanobot itself. They should explain this repository, capture reusable development procedures, and serve as implementation/verification notes for continuing project work.
+  - Developer/copilot skills live in `.codex/skills/`. These are for repo development by Codex CLI. They should explain this repository, capture reusable development procedures, and serve as implementation/verification notes for continuing project work.
   - OmniClaw company/runtime skills live under the selected company workspace, for example `<company-workspace-root>/master_skills/` and `<company-workspace-root>/forms/<form_type>/skills/`. These are product/runtime artifacts intended for deployed OmniClaw agents and form workflows.
 - Developer/copilot skill updates are mandatory closure work for implementation slices.
-- Whenever a developer/copilot skill is created or updated in `.codex/skills/<skill-name>/`, mirror the same contents into `skills/<skill-name>/` in the same change so both toolchains read the same SOP.
 - Do not treat workspace/company/form skills as substitutes for developer/copilot skills, and do not store developer workflow notes only inside workspace-managed skill locations.
 - For host provisioning work, split by concern:
   - Linux user creation
@@ -21,7 +20,7 @@ OmniClaw builds a kernel that orchestrates Nanobot agents from one selected comp
 - Use `/home/macos/.nanobot/`, `third_party/nanobot/`, and the Nanobot deployment assets as the runtime/config reference baseline.
 - Use `$runtime-gateway-control` for delegated gateway on/off/status endpoint workflows.
 - Use `$alembic-migration-ops` when changing schema or verifying migration success.
-- Every proven implementation pattern MUST be captured as a reusable developer/copilot skill under `.codex/skills/<skill-name>/SKILL.md` and mirrored to `skills/<skill-name>/SKILL.md`.
+- Every proven implementation pattern MUST be captured as a reusable developer/copilot skill under `.codex/skills/<skill-name>/SKILL.md`.
 - Skills may reference helper scripts under `scripts/` and may call privileged kernel endpoints instead of running privileged commands directly when needed.
 - Once a modular step is validated, keep the skill updated in the same change so the lesson is retained for future sessions.
 - After every completed implementation slice (task/subtask/fix), run a Skill Delta Review:
@@ -35,6 +34,8 @@ OmniClaw builds a kernel that orchestrates Nanobot agents from one selected comp
 - During testing, do not manually compensate for missing agent capabilities or permissions (for example deleting files, fixing ownership, or bypassing endpoint restrictions on the agent’s behalf) unless the explicit purpose of the test is break-glass operator recovery.
 - Treat missing permissions, missing endpoints, or missing packaged scripts as product gaps to document and fix, not as obstacles to work around invisibly during validation.
 - For every manual verification scenario that should later be executable by agents, define and prefer the canonical endpoint/script path first; only use repo-local exploratory commands for developer diagnosis, and clearly label them as non-canonical.
+- If a canonical command or migration fails, do not silently substitute an alternate path as if the problem were solved. Investigate the failure, report the exact path/config/command that failed, explain why it failed, and distinguish any temporary workaround from the canonical fix.
+- When reporting failures, include concrete details whenever available: resolved paths, config source, expected vs actual behavior, and whether the issue indicates stale legacy configuration, missing assets, permissions, or a product bug.
 
 ## Canonical Source Order
 Resolve requirements in this exact order:
@@ -65,7 +66,7 @@ Use this loop to maintain long-horizon context discipline:
 3. Implement and test against active OpenSpec tasks.
 4. Update `docs/documentation.md` with any new architecture or runtime behavior.
 5. Update `docs/current-task.md` and `docs/plan.md` status/checklists.
-6. After each completed task, run Skill Delta Review and update/create developer/copilot skills in `.codex/skills`, mirror them into `skills/`, and update any referenced helper scripts.
+6. After each completed task, run Skill Delta Review and update/create developer/copilot skills in `.codex/skills`, and update any referenced helper scripts.
 7. Before archive, run a final OpenSpec Skill Review Gate to confirm all reusable lessons are captured as skill updates or new skills.
 
 ## OpenSpec Workflow Contract
@@ -89,7 +90,7 @@ Every milestone is one OpenSpec change and must follow this exact sequence:
 - After every completed task, update both:
   - `docs/plan.md`
   - `docs/current-task.md`
-- After every completed task, also execute Skill Delta Review and update/create mirrored developer/copilot skill artifacts in `.codex/skills` and `skills/` in the same change.
+- After every completed task, also execute Skill Delta Review and update/create developer/copilot skill artifacts in `.codex/skills` in the same change.
 
 ## Skill Capture Contract
 - When a workflow step is stable and repeatable, document it as a skill immediately.
@@ -132,6 +133,7 @@ Top-level map (update as project evolves):
   - `docs/prompt.md`: long-horizon mission prompt for Codex project execution.
   - `docs/implement.md`: strict milestone implementation policy and verification rules.
   - `docs/documentation.md`: living implementation and operator documentation.
+  - `docs/company-workspace-requirements.md`: required company-workspace structure and assets; single workspace per company, no runtime fallbacks.
 - `openspec/`: spec-driven change management.
   - `openspec/config.yaml`: schema, project context, and artifact rules.
   - `openspec/specs/`: canonical capability specs.
@@ -143,15 +145,14 @@ Top-level map (update as project evolves):
 - `src/omniclaw/runtime_integration/`: optional OmniClaw-owned runtime hook used by vendored Nanobot for usage persistence.
 - `src/omniclaw/budgets/`: waterfall budget engine, budget actions/service, and LiteLLM cap reconciliation.
 - `src/omniclaw/instructions/`: AGENTS template management, rendering, and manager-skill policy delegation.
-- `src/omniclaw/ipc/`: file IPC router schemas/service for generic form scan/routing (`scan_forms`, `scan_messages` alias).
+- `src/omniclaw/ipc/`: file IPC router schemas/service for generic form scan/routing (`scan_forms`, `scan_messages` alias) plus immediate post-delivery AGENT wake via runtime prompt invocation.
 - `src/omniclaw/forms/`: form-type registry actions and graph-based state-machine decision service.
 - `src/omniclaw/skills/`: master-skill catalog lifecycle, node assignment, and workspace reconciliation service.
 - `src/omniclaw/usage/`: LLM usage/session export persistence and API service.
 - `tests/`: automated verification for API/runtime behavior.
-- `.codex/skills/`: developer/copilot skills for Codex CLI; must mirror `skills/`.
-- `skills/`: developer/copilot skills for nanobot runtime; must mirror `.codex/skills/`.
+- `.codex/skills/`: developer/copilot skills for Codex CLI.
 - `scripts/budgets/`: helper scripts for budget action triggers and manager budget operations.
-- `scripts/company/`: company workspace bootstrap and repo-workspace migration helpers.
+- `scripts/company/`: company workspace inspection helpers; legacy bootstrap/migration entrypoints are retired.
 - `scripts/company/show_company_context.py`: registry-backed company path/context resolver used by operator scripts.
 - `scripts/install/`: monorepo bootstrap helper for shared `omniclaw` + `nanobot` package installation.
 - `scripts/provisioning/`: helper scripts used by provisioning-related skills and manual verification.
@@ -159,16 +160,7 @@ Top-level map (update as project evolves):
 - `scripts/ipc/`: helper scripts for IPC router action triggers and form-routing checks.
 - `scripts/forms/`: helper scripts for form-type administration, workspace workflow publication, and smoke checks.
 - `scripts/skills/`: helper scripts for master-skill catalog, assignment, and reconciliation actions.
-- `workspace/`: repo-local seed/migration source for company assets; the canonical runtime company root defaults to `<user-home>/.omniClaw/workspace`.
-  - `workspace/company_config.json`: legacy seed company settings consumed only as migration/bootstrap input for `~/.omniClaw/config.json`.
-  - `workspace/company_models.yaml`: legacy seed model catalog consumed only as migration/bootstrap input for `~/.omniClaw/config.json`.
-  - `workspace/agents/`: legacy repo-local agent examples and migration input.
-  - `workspace/forms/`: seed canonical form workflow packages (`<form_type>/workflow.json`).
-  - `workspace/forms/<form_type>/skills/`: seed per-form stage skill master copies (`<required_skill>/...`).
-  - `workspace/master_skills/`: seed loose company master skills for workspace bootstrap/migration.
-  - `workspace/nanobot_workspace_templates/`: seed deployed Nanobot workspace template source.
-  - `workspace/nanobots_instructions/`: seed external instruction templates per node.
-  - `workspace/form_archive/`: seed archive examples and migration input.
+- `tests/fixtures/`: test-only fixture assets extracted from legacy repo-managed workspace data; not used by runtime as a workspace fallback.
 - `main.py`: temporary bootstrap entrypoint.
 - `pyproject.toml`: Python project metadata.
 - `third_party/nanobot/`: vendored Nanobot runtime package source kept under monorepo ownership.

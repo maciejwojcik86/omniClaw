@@ -18,6 +18,7 @@ from omniclaw.db.enums import (
     RelationshipType,
     SkillValidationStatus,
 )
+from omniclaw.runtime.retry_policy import RetryFailureClass
 
 
 def _uuid_str() -> str:
@@ -316,6 +317,60 @@ class AgentLLMCall(Base):
     start_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class AgentTaskRetry(Base):
+    __tablename__ = "agent_task_retries"
+    __table_args__ = (UniqueConstraint("task_key", name="uq_agent_task_retries_task_key"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    node_id: Mapped[str] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False)
+    task_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    session_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provider: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    failure_class: Mapped[RetryFailureClass] = mapped_column(
+        Enum(RetryFailureClass, name="retry_failure_class", native_enum=False, validate_strings=True),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="pending", server_default="pending")
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    request_payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AgentLLMFailureEvent(Base):
+    __tablename__ = "agent_llm_failure_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    node_id: Mapped[str] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False)
+    task_retry_id: Mapped[str | None] = mapped_column(
+        ForeignKey("agent_task_retries.id", ondelete="SET NULL"), nullable=True
+    )
+    session_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    task_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provider: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    failure_class: Mapped[RetryFailureClass] = mapped_column(
+        Enum(RetryFailureClass, name="retry_failure_class", native_enum=False, validate_strings=True),
+        nullable=False,
+    )
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

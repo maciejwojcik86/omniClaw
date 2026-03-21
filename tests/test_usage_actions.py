@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from omniclaw.app import create_app
 from omniclaw.config import Settings
 from omniclaw.db.models import AgentSessionExport, Node, NodeStatus, NodeType
+from omniclaw.runtime.retry_policy import RetryFailureClass
 from omniclaw.db.repository import KernelRepository
 from omniclaw.db.session import create_session_factory
 from tests.helpers import migrate_database_to_head
@@ -213,6 +214,85 @@ def test_get_recent_sessions_returns_node_grouped_summaries(test_setup):
     assert payload["sessions"][0]["llm_call_count"] == 2
     assert payload["sessions"][0]["total_tokens"] == 40
     assert payload["sessions"][0]["cost_usd"] == pytest.approx(0.10)
+
+
+def test_list_retry_state_returns_pending_retry_rows(test_setup):
+    fast_client, session_factory = test_setup
+    repository = KernelRepository(session_factory)
+    node = repository.create_node(
+        node_type=NodeType.AGENT,
+        name="RetryUsageNode_01",
+        status=NodeStatus.ACTIVE,
+        workspace_root="/tmp/retry-usage-node-01",
+    )
+    repository.upsert_agent_task_retry(
+        node_id=node.id,
+        task_key=f"invoke_prompt:{node.id}:cli:retry-usage",
+        session_key="cli:retry-usage",
+        provider="openrouter",
+        model="openrouter/test-model",
+        failure_class=RetryFailureClass.TRANSIENT,
+        status="pending",
+        attempt_count=2,
+        max_attempts=8,
+        last_error_message="429 Too Many Requests",
+    )
+
+    response = fast_client.get(f"/v1/usage/retries?node_id={node.id}&retry_status=pending")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["node_id"] == node.id
+    assert payload["items"][0]["failure_class"] == "transient"
+    assert payload["items"][0]["status"] == "pending"
+
+
+def test_list_failure_trends_groups_by_provider_model(test_setup):
+    fast_client, session_factory = test_setup
+    repository = KernelRepository(session_factory)
+    node_one = repository.create_node(
+        node_type=NodeType.AGENT,
+        name="FailureTrendNode_01",
+        status=NodeStatus.ACTIVE,
+        workspace_root="/tmp/failure-trend-node-01",
+    )
+    node_two = repository.create_node(
+        node_type=NodeType.AGENT,
+        name="FailureTrendNode_02",
+        status=NodeStatus.ACTIVE,
+        workspace_root="/tmp/failure-trend-node-02",
+    )
+    repository.insert_llm_failure_event(
+        node_id=node_one.id,
+        provider="openrouter",
+        model="openrouter/test-model",
+        failure_class=RetryFailureClass.TRANSIENT,
+        error_message="429",
+    )
+    repository.insert_llm_failure_event(
+        node_id=node_two.id,
+        provider="openrouter",
+        model="openrouter/test-model",
+        failure_class=RetryFailureClass.TRANSIENT,
+        error_message="429",
+    )
+    repository.insert_llm_failure_event(
+        node_id=node_two.id,
+        provider="openrouter",
+        model="openrouter/other-model",
+        failure_class=RetryFailureClass.TERMINAL,
+        error_message="invalid api key",
+    )
+
+    response = fast_client.get("/v1/usage/failure-trends?provider=openrouter")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["items"]) >= 2
+    assert payload["items"][0]["provider"] == "openrouter"
+    assert payload["items"][0]["failure_count"] >= 1
+    assert {item["model"] for item in payload["items"]} >= {"openrouter/test-model", "openrouter/other-model"}
 
 
 def test_get_session_usage_summary_returns_404_when_missing(test_setup):

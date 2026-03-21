@@ -82,8 +82,6 @@ class InstructionsService:
         self._skills_service = skills_service or SkillsService(repository=repository, settings=self._settings)
         self._repo_root = _repo_root()
         self._default_template_path = self._company_paths.workspace_templates_root / "AGENTS.md"
-        if not self._default_template_path.exists():
-            self._default_template_path = self._repo_root / "workspace" / "nanobot_workspace_templates" / "AGENTS.md"
 
     def execute(self, request: InstructionsActionRequest) -> dict[str, object]:
         if request.action == "list_accessible_targets":
@@ -517,6 +515,10 @@ class InstructionsService:
         return Path(node.workspace_root).expanduser().resolve()
 
     def _default_template_text(self) -> str:
+        if not self._default_template_path.exists():
+            raise FileNotFoundError(
+                f"company workspace template file does not exist: {self._default_template_path}"
+            )
         return self._default_template_path.read_text(encoding="utf-8")
 
     def _copy_skill_tree(self, *, source: Path, target: Path) -> None:

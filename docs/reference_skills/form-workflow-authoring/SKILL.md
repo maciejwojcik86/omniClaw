@@ -270,7 +270,7 @@ Design notes:
 {
   "form_type": "deploy_new_agent",
   "version": "1.0.0",
-  "description": "Cross-department workflow for deploying a new Nullclaw agent.",
+  "description": "Cross-department workflow for deploying a new Nanobot agent.",
   "start_stage": "BUSINESS_CASE",
   "end_stage": "ARCHIVED",
   "stages": {
@@ -308,7 +308,7 @@ Design notes:
     },
     "AGENT_DEPLOYMENT": {
       "target": "HR_Agent_Spawner",
-      "required_skill": "deploy-new-claw-agent",
+      "required_skill": "deploy-new-nanobot",
       "decisions": {
         "deploy_and_archive": "ARCHIVED"
       }

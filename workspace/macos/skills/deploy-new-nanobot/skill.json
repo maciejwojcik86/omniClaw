@@ -1,6 +1,0 @@
-{
-  "name": "deploy-new-nanobot",
-  "version": "1.0",
-  "description": "Deploy a repo-local Nanobot agent under workspace/agents/<agent_name>/ and register it through the OmniClaw kernel.",
-  "author": "omniclaw"
-}

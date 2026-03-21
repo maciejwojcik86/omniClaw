@@ -15,7 +15,7 @@ if str(SRC) not in sys.path:
 from omniclaw.app import create_app
 from omniclaw.config import Settings
 from omniclaw.db.enums import NodeStatus, NodeType
-from omniclaw.db.models import AgentLLMCall, Node
+from omniclaw.db.models import AgentLLMCall, AgentLLMFailureEvent, AgentTaskRetry, Node
 from omniclaw.db.repository import KernelRepository
 from omniclaw.db.session import create_session_factory
 from tests.helpers import migrate_database_to_head
@@ -379,6 +379,10 @@ def test_runtime_invoke_prompt_system_mode_runs_cli_and_returns_output(tmp_path:
     assert response.status_code == 200
     payload = response.json()
     assert payload["invocation"]["reply"] == "pong from system mode"
+    metadata_path = Path(payload["invocation"]["artifact_paths"]["run_metadata"])
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert metadata["invocation"]["status"] == "completed"
+    assert metadata["invocation"]["retry"] is None
     called_args = mocked_run.call_args.args[0]
     assert called_args[:2] == ["bash", "-lc"]
     assert "nanobot agent" in called_args[2]
@@ -390,6 +394,203 @@ def test_runtime_invoke_prompt_system_mode_runs_cli_and_returns_output(tmp_path:
     assert called_env["OMNICLAW_RUNTIME_OUTPUT_ROOT"].startswith(str(workspace_root.resolve()))
     assert called_env["OMNICLAW_RUNTIME_PROMPT_LOG_ROOT"].startswith(str(workspace_root.resolve()))
     assert "/home/macos/nanobot" not in called_env.get("PYTHONPATH", "")
+
+
+def test_runtime_invoke_prompt_system_mode_defers_retryable_failures(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'runtime-system-retry.db'}"
+    workspace_root = tmp_path / "agent-workspace-retry"
+    config_path = tmp_path / "agent-config-retry.json"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("{}", encoding="utf-8")
+
+    settings = Settings(
+        app_name="omniclaw-kernel",
+        environment="test",
+        log_level="INFO",
+        database_url=database_url,
+        company_settings={
+            "budgeting": {
+                "reset_time_utc": "18:00",
+            },
+        },
+        provisioning_mode="mock",
+        allow_privileged_provisioning=False,
+        runtime_mode="system",
+        allow_privileged_runtime=True,
+        runtime_use_sudo=False,
+        runtime_command_timeout_seconds=10,
+        runtime_output_boundary_rel="drafts/runtime",
+    )
+    migrate_database_to_head(database_url)
+    app = create_app(settings)
+    repository = KernelRepository(create_session_factory(database_url))
+    node = repository.create_node(
+        node_type=NodeType.AGENT,
+        name="RetryingInvoker_01",
+        status=NodeStatus.ACTIVE,
+        linux_username="retrying_invoker_01",
+        workspace_root=str(workspace_root.resolve()),
+        runtime_config_path=str(config_path.resolve()),
+        primary_model="openrouter/anthropic/claude-sonnet-4",
+    )
+    client = TestClient(app)
+
+    class Result:
+        returncode = 1
+        stdout = ""
+        stderr = "429 Too Many Requests"
+
+    with patch("omniclaw.runtime.service.subprocess.run", return_value=Result()):
+        response = client.post(
+            "/v1/runtime/actions",
+            json={
+                "action": "invoke_prompt",
+                "node_id": node.id,
+                "prompt": "Say pong",
+                "session_key": "cli:retryable",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["invocation"]["status"] == "deferred_retry"
+    assert payload["invocation"]["retry"]["failure_class"] == "transient"
+    assert payload["invocation"]["retry"]["attempt_count"] == 1
+    metadata_path = Path(payload["invocation"]["artifact_paths"]["run_metadata"])
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert metadata["invocation"]["status"] == "deferred_retry"
+    assert metadata["invocation"]["failure_class"] == "transient"
+    assert metadata["invocation"]["retry"]["attempt_count"] == 1
+
+    session_factory = create_session_factory(database_url)
+    with session_factory() as session:
+        retries = session.query(AgentTaskRetry).filter(AgentTaskRetry.node_id == node.id).all()
+        failures = session.query(AgentLLMFailureEvent).filter(AgentLLMFailureEvent.node_id == node.id).all()
+        assert len(retries) == 1
+        assert retries[0].status == "pending"
+        assert retries[0].failure_class.value == "transient"
+        assert retries[0].next_attempt_at is not None
+        assert json.loads(retries[0].request_payload_json or "{}")["prompt"] == "Say pong"
+        assert len(failures) == 1
+        assert failures[0].provider == "openrouter"
+        assert failures[0].model == "openrouter/anthropic/claude-sonnet-4"
+
+
+def test_runtime_retry_now_and_cancel_retry_controls(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'runtime-retry-controls.db'}"
+    workspace_root = tmp_path / "agent-workspace-controls"
+    config_path = tmp_path / "agent-config-controls.json"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("{}", encoding="utf-8")
+
+    settings = Settings(
+        app_name="omniclaw-kernel",
+        environment="test",
+        log_level="INFO",
+        database_url=database_url,
+        provisioning_mode="mock",
+        allow_privileged_provisioning=False,
+        runtime_mode="mock",
+        allow_privileged_runtime=False,
+        runtime_use_sudo=False,
+        runtime_output_boundary_rel="drafts/runtime",
+    )
+    migrate_database_to_head(database_url)
+    app = create_app(settings)
+    repository = KernelRepository(create_session_factory(database_url))
+    node = repository.create_node(
+        node_type=NodeType.AGENT,
+        name="ControlInvoker_01",
+        status=NodeStatus.ACTIVE,
+        linux_username="control_invoker_01",
+        workspace_root=str(workspace_root.resolve()),
+        runtime_config_path=str(config_path.resolve()),
+        primary_model="openrouter/test-model",
+    )
+    task_key = f"invoke_prompt:{node.id}:cli:control"
+    repository.upsert_agent_task_retry(
+        node_id=node.id,
+        task_key=task_key,
+        session_key="cli:control",
+        provider="openrouter",
+        model="openrouter/test-model",
+        failure_class="transient",
+        status="pending",
+        attempt_count=1,
+        max_attempts=8,
+        last_error_message="429",
+    )
+    client = TestClient(app)
+
+    retry_now = client.post("/v1/runtime/actions", json={"action": "retry_now", "task_key": task_key})
+    assert retry_now.status_code == 200, retry_now.text
+    assert retry_now.json()["retry"]["status"] == "pending"
+    assert retry_now.json()["retry"]["next_attempt_at"] is not None
+
+    cancel = client.post("/v1/runtime/actions", json={"action": "cancel_retry", "task_key": task_key})
+    assert cancel.status_code == 200
+    assert cancel.json()["retry"]["status"] == "cancelled"
+
+
+def test_runtime_invoke_prompt_system_mode_terminal_failure_records_metadata(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'runtime-system-terminal.db'}"
+    workspace_root = tmp_path / "agent-workspace-terminal"
+    config_path = tmp_path / "agent-config-terminal.json"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("{}", encoding="utf-8")
+
+    settings = Settings(
+        app_name="omniclaw-kernel",
+        environment="test",
+        log_level="INFO",
+        database_url=database_url,
+        provisioning_mode="mock",
+        allow_privileged_provisioning=False,
+        runtime_mode="system",
+        allow_privileged_runtime=True,
+        runtime_use_sudo=False,
+        runtime_command_timeout_seconds=10,
+        runtime_output_boundary_rel="drafts/runtime",
+    )
+    migrate_database_to_head(database_url)
+    app = create_app(settings)
+    repository = KernelRepository(create_session_factory(database_url))
+    node = repository.create_node(
+        node_type=NodeType.AGENT,
+        name="TerminalInvoker_01",
+        status=NodeStatus.ACTIVE,
+        linux_username="terminal_invoker_01",
+        workspace_root=str(workspace_root.resolve()),
+        runtime_config_path=str(config_path.resolve()),
+        primary_model="openrouter/test-model",
+    )
+    client = TestClient(app)
+
+    class Result:
+        returncode = 1
+        stdout = ""
+        stderr = "invalid api key"
+
+    with patch("omniclaw.runtime.service.subprocess.run", return_value=Result()):
+        response = client.post(
+            "/v1/runtime/actions",
+            json={
+                "action": "invoke_prompt",
+                "node_id": node.id,
+                "prompt": "Say pong",
+                "session_key": "cli:terminal",
+            },
+        )
+
+    assert response.status_code == 500
+    assert "classification=terminal" in response.json()["detail"]
+    run_dir = workspace_root / "drafts" / "runtime" / "runs"
+    metadata_files = sorted(run_dir.glob("*.json"))
+    assert metadata_files
+    metadata = json.loads(metadata_files[-1].read_text(encoding="utf-8"))
+    assert metadata["invocation"]["status"] == "terminal_failure"
+    assert metadata["invocation"]["failure_class"] == "terminal"
+    assert "invalid api key" in metadata["invocation"]["error"]
 
 
 def test_runtime_system_mode_budget_report_reconciles_subcent_usage(tmp_path: Path) -> None:

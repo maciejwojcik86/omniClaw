@@ -5,7 +5,7 @@ license: MIT
 compatibility: Python 3.11+, running OmniClaw kernel API
 metadata:
   author: omniclaw
-  version: "0.3"
+  version: "0.4"
 ---
 
 Use this skill when implementing or extending form routing in `src/omniclaw/ipc/service.py`.
@@ -20,6 +20,7 @@ Use this skill when implementing or extending form routing in `src/omniclaw/ipc/
 - Kernel-managed routed metadata field `stage_skill` (next-stage required skill, empty string at terminal no-holder stages).
 - Scan traversal is hard-bounded by action `limit` (router stops processing once scanned count reaches limit).
 - Kernel auto-scan executes through non-blocking thread offload from lifespan loop.
+- After a successful inbox delivery to an AGENT node, IPC can immediately wake that agent through runtime `invoke_prompt` using a company-workspace prompt template at `<company-workspace-root>/NEW_INBOX_MESSAGE_PROMPT.md`.
 
 ## Frontmatter Contract (runtime)
 - `form_type`
@@ -49,6 +50,7 @@ Legacy compatibility:
    - target copy in `inbox/new` (when next holder exists)
    - backup copy in `workspace/form_archive/<form_type>/<form_id>/`
    - routed frontmatter contains kernel-written `agent`, `stage_skill`, and `target_agent`
+   - when the target is an AGENT and `NEW_INBOX_MESSAGE_PROMPT.md` exists, the IPC response item includes `wake_trigger.status=triggered`
 4. Verify DB state:
    - `forms_ledger.current_status` updated to next stage
    - `forms_ledger.current_holder_node` updated to next holder (or null)

@@ -1,31 +1,30 @@
 # OmniClaw Current Task
 
 - active_change: `none`
-- objective: Await next milestone selection after closing the global company registry change.
+- objective: Select the next change after closing retry hardening.
 
 ## last_completed_change
-- change: `m12b-global-company-registry`
-- archived_as: `openspec/changes/archive/2026-03-16-m12b-global-company-registry`
+- change: `m13a-agent-task-retry-hardening`
+- archived_as: `openspec/changes/archive/2026-03-20-m13a-agent-task-retry-hardening`
 - closure_notes:
-  - Replaced workspace-local company settings with one host-level OmniClaw registry at `~/.omniClaw/config.json`.
-  - Made `omniclaw --company <slug-or-display-name>` the canonical kernel startup contract.
-  - Migrated the local developer company into the registry, removed workspace-local company settings/model files, and archived the change after syncing canonical specs.
+  - Added persisted retry state in `agent_task_retries` and provider/model failure telemetry in `agent_llm_failure_events`.
+  - Implemented retry classification (`transient`, `budget_recoverable`, `terminal`) with progressive backoff and long-delay retry windows.
+  - Added kernel-managed retry scheduling, canonical reporting endpoints, operator retry/cancel controls, and helper scripts.
+  - Fixed Alembic default DB resolution so CLI migrations follow the registry-backed company workspace instead of stale repo-local paths.
 
 ## next_focus
-- No active change is selected.
-- Next queued milestone in `docs/plan.md`: `m13-constitution-and-sop-pack`.
+- No active change selected.
+- Recommended next change: canonical company bootstrap/init flow for multi-company setup.
 
 ## blockers
-- None currently known.
+- None for the archived retry-hardening change.
 
 ## current_status
-- `m12-nanobot-monorepo-internalization` is archived at `openspec/changes/archive/2026-03-16-m12-nanobot-monorepo-internalization`.
-- `m12b-global-company-registry` is archived at `openspec/changes/archive/2026-03-16-m12b-global-company-registry`.
-- The implemented company config state is now:
-  - `~/.omniClaw/config.json` is the only canonical company-settings source
-  - `omniclaw --company <slug-or-display-name>` is the canonical startup contract
-  - company workspaces keep editable assets and per-company SQLite state, but no longer own canonical company settings JSON
+- `m13a-agent-task-retry-hardening` is archived after strict validation and targeted verification (`31 passed`).
+- Canonical specs were updated during archive.
+- Retry lifecycle, provider/model incident reporting, and operator recovery workflow are now documented in `docs/documentation.md`.
 
 ## next_up
-- Select and open the next OpenSpec change before more implementation work begins.
-- Keep the local registry-backed developer environment at `/home/macos/.omniClaw/config.json` and `/home/macos/.omniClaw/workspace` as the baseline for future work.
+- Open the follow-up company bootstrap/init change for multi-company setup.
+- Keep using the registry-backed per-company DB model as the canonical architecture.
+- Investigate unrelated dirty worktree items separately from the archived M13a change.

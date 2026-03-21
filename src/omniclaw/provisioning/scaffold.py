@@ -23,7 +23,6 @@ REQUIRED_DIRS: tuple[str, ...] = (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SEED_TEMPLATE_ROOT = REPO_ROOT / "workspace" / "nanobot_workspace_templates"
 
 REQUIRED_FILE_TEMPLATES: dict[str, str] = {
     "notes/DECISIONS.md": "notes/DECISIONS.md",
@@ -44,11 +43,12 @@ def _resolve_template_root(template_root: Path | None) -> Path:
         resolved = template_root.expanduser().resolve()
         if resolved.exists():
             return resolved
+        raise FileNotFoundError(f"explicit template_root does not exist: {resolved}")
     settings = load_settings()
     company_template_root = build_company_paths(settings).workspace_templates_root
-    if company_template_root.exists():
-        return company_template_root
-    return SEED_TEMPLATE_ROOT
+    if not company_template_root.exists():
+        raise FileNotFoundError(f"company workspace template root does not exist: {company_template_root}")
+    return company_template_root
 
 
 def _load_template_text(relative_path: str, *, template_root: Path | None = None) -> str:

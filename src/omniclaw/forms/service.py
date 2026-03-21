@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from omniclaw.company_paths import CompanyPaths, build_company_paths, repo_workspace_root
+from omniclaw.company_paths import CompanyPaths, build_company_paths
 from omniclaw.config import Settings, load_settings
 from omniclaw.db.enums import FormStatus, FormTypeLifecycle, NodeStatus
 from omniclaw.db.models import FormLedger, FormTypeDefinition, Node
@@ -1924,7 +1924,7 @@ class FormsService:
     def _workspace_forms_root(self) -> Path:
         forms_root = self._workspace_root() / "forms"
         if not forms_root.exists():
-            return repo_workspace_root() / "forms"
+            raise HTTPException(status_code=409, detail=f"company workspace forms root does not exist: {forms_root}")
         return forms_root
 
     def _workspace_form_skills_root(self, *, type_key: str) -> Path:

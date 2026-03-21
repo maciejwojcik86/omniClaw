@@ -26,14 +26,18 @@ workspace/*/outbox/archive/
 # Local developer/runtime state
 .env
 .agent/
+.codex/
+.openclaw/
+AGENTS.md
+IDENTITY.md
 /GEMINI.md
 /HEARTBEAT.md
 /SOUL.md
 /TOOLS.md
 /USER.md
 /memory/
+/cron/
 /sessions/
-/cron/jobs.json
 /notatki.md
 
 # Live workspace traffic and runtime outputs

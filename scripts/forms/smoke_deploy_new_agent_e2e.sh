@@ -77,7 +77,7 @@ while [[ $# -gt 0 ]]; do
       request_file="$2"
       shift 2
       ;;
-    --nanobot-bin|--nullclaw-bin)
+    --nanobot-bin)
       nanobot_bin="$2"
       shift 2
       ;;

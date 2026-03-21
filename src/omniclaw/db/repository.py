@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm.exc import StaleDataError
 
-from omniclaw.company_paths import CompanyPaths, build_company_paths, repo_workspace_root
+from omniclaw.company_paths import CompanyPaths, build_company_paths
 from omniclaw.config import Settings, build_settings, load_settings
 from omniclaw.db.enums import (
     BudgetMode,
@@ -25,9 +25,12 @@ from omniclaw.db.enums import (
     RelationshipType,
     SkillValidationStatus,
 )
+from omniclaw.runtime.retry_policy import RetryFailureClass
 from omniclaw.db.models import (
     AgentLLMCall,
+    AgentLLMFailureEvent,
     AgentSessionExport,
+    AgentTaskRetry,
     Budget,
     BudgetAllocation,
     BudgetCycle,
@@ -59,10 +62,7 @@ class KernelRepository:
         if settings is not None:
             self._settings = settings
         else:
-            try:
-                self._settings = load_settings()
-            except (FileNotFoundError, ValueError):
-                self._settings = build_settings(company_workspace_root=repo_workspace_root())
+            self._settings = load_settings()
         self._company_paths: CompanyPaths = build_company_paths(self._settings)
 
     def create_node(
@@ -605,6 +605,249 @@ class KernelRepository:
         if isinstance(raw_source, NodeSkillAssignmentSource):
             return raw_source
         return NodeSkillAssignmentSource(str(raw_source).strip().upper())
+
+    def upsert_agent_task_retry(
+        self,
+        *,
+        node_id: str,
+        task_key: str,
+        failure_class: RetryFailureClass | str,
+        status: str = "pending",
+        attempt_count: int = 0,
+        max_attempts: int = 0,
+        next_attempt_at: datetime | None = None,
+        request_payload_json: str | None = None,
+        last_error_message: str | None = None,
+        session_key: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        last_run_id: str | None = None,
+        claimed_at: datetime | None = None,
+        completed_at: datetime | None = None,
+    ) -> AgentTaskRetry:
+        with self._session_factory() as session:
+            record = (
+                session.query(AgentTaskRetry)
+                .filter(AgentTaskRetry.task_key == task_key)
+                .order_by(AgentTaskRetry.created_at.asc())
+                .first()
+            )
+            normalized_class = failure_class if isinstance(failure_class, RetryFailureClass) else RetryFailureClass(str(failure_class).strip().lower())
+            if record is None:
+                record = AgentTaskRetry(
+                    node_id=node_id,
+                    task_key=task_key,
+                    failure_class=normalized_class,
+                )
+                session.add(record)
+            record.node_id = node_id
+            record.session_key = session_key
+            record.provider = provider
+            record.model = model
+            record.failure_class = normalized_class
+            record.status = status
+            record.attempt_count = attempt_count
+            record.max_attempts = max_attempts
+            record.next_attempt_at = next_attempt_at
+            record.request_payload_json = request_payload_json
+            record.last_error_message = last_error_message
+            record.last_run_id = last_run_id
+            record.claimed_at = claimed_at
+            record.completed_at = completed_at
+            session.commit()
+            session.refresh(record)
+            return record
+
+    def get_agent_task_retry(self, *, task_key: str) -> AgentTaskRetry | None:
+        with self._session_factory() as session:
+            return (
+                session.query(AgentTaskRetry)
+                .filter(AgentTaskRetry.task_key == task_key)
+                .order_by(AgentTaskRetry.created_at.asc())
+                .first()
+            )
+
+    def list_due_agent_task_retries(self, *, due_before: datetime, limit: int = 20) -> list[AgentTaskRetry]:
+        with self._session_factory() as session:
+            return (
+                session.query(AgentTaskRetry)
+                .filter(
+                    AgentTaskRetry.status == "pending",
+                    AgentTaskRetry.next_attempt_at.is_not(None),
+                    AgentTaskRetry.next_attempt_at <= due_before,
+                )
+                .order_by(AgentTaskRetry.next_attempt_at.asc(), AgentTaskRetry.created_at.asc())
+                .limit(limit)
+                .all()
+            )
+
+    def claim_agent_task_retry(self, *, task_key: str, claimed_at: datetime | None = None) -> AgentTaskRetry | None:
+        with self._session_factory() as session:
+            record = (
+                session.query(AgentTaskRetry)
+                .filter(AgentTaskRetry.task_key == task_key)
+                .order_by(AgentTaskRetry.created_at.asc())
+                .first()
+            )
+            if record is None or record.status != "pending":
+                return None
+            record.status = "claimed"
+            record.claimed_at = claimed_at or datetime.now(timezone.utc)
+            session.commit()
+            session.refresh(record)
+            return record
+
+    def update_agent_task_retry_status(
+        self,
+        *,
+        task_key: str,
+        status: str,
+        next_attempt_at: datetime | None = None,
+        claimed_at: datetime | None | object = _UNSET,
+        completed_at: datetime | None | object = _UNSET,
+        last_error_message: str | None | object = _UNSET,
+        last_run_id: str | None | object = _UNSET,
+    ) -> AgentTaskRetry | None:
+        with self._session_factory() as session:
+            record = (
+                session.query(AgentTaskRetry)
+                .filter(AgentTaskRetry.task_key == task_key)
+                .order_by(AgentTaskRetry.created_at.asc())
+                .first()
+            )
+            if record is None:
+                return None
+            record.status = status
+            record.next_attempt_at = next_attempt_at
+            if claimed_at is not _UNSET:
+                record.claimed_at = claimed_at
+            if completed_at is not _UNSET:
+                record.completed_at = completed_at
+            if last_error_message is not _UNSET:
+                record.last_error_message = last_error_message
+            if last_run_id is not _UNSET:
+                record.last_run_id = last_run_id
+            session.commit()
+            session.refresh(record)
+            return record
+
+    def insert_llm_failure_event(
+        self,
+        *,
+        node_id: str,
+        failure_class: RetryFailureClass | str,
+        session_key: str | None = None,
+        task_key: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        error_message: str | None = None,
+        task_retry_id: str | None = None,
+        occurred_at: datetime | None = None,
+    ) -> AgentLLMFailureEvent:
+        with self._session_factory() as session:
+            normalized_class = failure_class if isinstance(failure_class, RetryFailureClass) else RetryFailureClass(str(failure_class).strip().lower())
+            record = AgentLLMFailureEvent(
+                node_id=node_id,
+                task_retry_id=task_retry_id,
+                session_key=session_key,
+                task_key=task_key,
+                provider=provider,
+                model=model,
+                failure_class=normalized_class,
+                error_message=error_message,
+                occurred_at=occurred_at,
+            )
+            session.add(record)
+            session.commit()
+            session.refresh(record)
+            return record
+
+    def list_llm_failure_events(
+        self,
+        *,
+        node_id: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        failure_class: RetryFailureClass | str | None = None,
+        limit: int | None = None,
+    ) -> list[AgentLLMFailureEvent]:
+        with self._session_factory() as session:
+            query = session.query(AgentLLMFailureEvent)
+            if node_id is not None:
+                query = query.filter(AgentLLMFailureEvent.node_id == node_id)
+            if provider is not None:
+                query = query.filter(AgentLLMFailureEvent.provider == provider)
+            if model is not None:
+                query = query.filter(AgentLLMFailureEvent.model == model)
+            if failure_class is not None:
+                normalized_class = failure_class if isinstance(failure_class, RetryFailureClass) else RetryFailureClass(str(failure_class).strip().lower())
+                query = query.filter(AgentLLMFailureEvent.failure_class == normalized_class)
+            query = query.order_by(AgentLLMFailureEvent.occurred_at.asc(), AgentLLMFailureEvent.created_at.asc())
+            if limit is not None:
+                query = query.limit(limit)
+            return query.all()
+
+    def summarize_llm_failures_by_provider_model(
+        self,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        with self._session_factory() as session:
+            query = session.query(
+                AgentLLMFailureEvent.provider.label("provider"),
+                AgentLLMFailureEvent.model.label("model"),
+                AgentLLMFailureEvent.failure_class.label("failure_class"),
+                func.count(AgentLLMFailureEvent.id).label("failure_count"),
+                func.max(AgentLLMFailureEvent.occurred_at).label("latest_failure_at"),
+            )
+            if provider is not None:
+                query = query.filter(AgentLLMFailureEvent.provider == provider)
+            if model is not None:
+                query = query.filter(AgentLLMFailureEvent.model == model)
+            rows = (
+                query.group_by(
+                    AgentLLMFailureEvent.provider,
+                    AgentLLMFailureEvent.model,
+                    AgentLLMFailureEvent.failure_class,
+                )
+                .order_by(desc("failure_count"), desc("latest_failure_at"))
+                .limit(limit)
+                .all()
+            )
+            return [
+                {
+                    "provider": row.provider,
+                    "model": row.model,
+                    "failure_class": row.failure_class.value if hasattr(row.failure_class, "value") else str(row.failure_class),
+                    "failure_count": int(row.failure_count or 0),
+                    "latest_failure_at": row.latest_failure_at,
+                }
+                for row in rows
+            ]
+
+    def list_agent_task_retries(
+        self,
+        *,
+        node_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[AgentTaskRetry]:
+        with self._session_factory() as session:
+            query = session.query(AgentTaskRetry)
+            if node_id is not None:
+                query = query.filter(AgentTaskRetry.node_id == node_id)
+            if status is not None:
+                query = query.filter(AgentTaskRetry.status == status)
+            return (
+                query.order_by(
+                    AgentTaskRetry.next_attempt_at.asc(),
+                    AgentTaskRetry.created_at.desc(),
+                )
+                .limit(limit)
+                .all()
+            )
 
     def insert_agent_session_export(
         self,
@@ -1561,7 +1804,7 @@ class KernelRepository:
     def _load_workspace_form_package(self, *, type_key: str) -> dict[str, Any] | None:
         forms_root = self._company_paths.forms_root
         if not forms_root.exists():
-            forms_root = repo_workspace_root() / "forms"
+            return None
         workflow_path = forms_root / type_key / "workflow.json"
         if not workflow_path.exists():
             return None

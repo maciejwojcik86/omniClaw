@@ -40,6 +40,9 @@ Living operator/developer documentation for current implementation.
 - Runtime binary selection defaults to `nanobot` and can be overridden with `OMNICLAW_RUNTIME_COMMAND_BIN`.
 - Canonical runtime gateway template uses Nanobot with explicit workspace/config inputs:
   - `{runtime_bin} gateway --workspace {workspace_root} --config {config_path} --port {port}`
+- Runtime retry scheduler while kernel is running:
+  - enabled by default: `OMNICLAW_RUNTIME_RETRY_SCHEDULER_ENABLED=true`
+  - poll interval seconds: `OMNICLAW_RUNTIME_RETRY_SCHEDULER_POLL_INTERVAL_SECONDS` (default `60`)
 - Canonical company settings source: `~/.omniClaw/config.json -> companies.<slug>`
 - Legacy fallback: raw workspace/config overrides remain available for tests and migration tooling, but they are no longer the documented operator path.
 
@@ -90,8 +93,8 @@ Living operator/developer documentation for current implementation.
   - `runtime_packages/`
   - `finances/`
 - Missing workspace roots referenced by the global registry now fail fast during startup.
-- Repo `workspace/` remains the seed/migration input used by bootstrap tooling, fixtures, and tests.
-- Current local developer migration has been applied to `/home/macos/.omniClaw/workspace`, with company settings now stored in `/home/macos/.omniClaw/config.json`.
+- OmniClaw now relies only on the configured company workspace from `~/.omniClaw/config.json`; repo-local workspace fallbacks are not supported.
+- Current local developer runtime uses `/home/macos/.omniClaw/workspace`, with company settings stored in `/home/macos/.omniClaw/config.json`.
 - Validation evidence:
   - `openspec validate --type change m12b-global-company-registry --strict`
   - `PYTEST_ADDOPTS='-s' uv run pytest -q tests` (`101 passed in 185.58s`)
@@ -103,7 +106,7 @@ Living operator/developer documentation for current implementation.
 - Canonical workspace root is `<company-workspace-root>/agents/<agent_name>/workspace/`.
 - Canonical baseline template root is `<company-workspace-root>/nanobot_workspace_templates/`.
 - `provision_agent` no longer creates a Linux user for AGENT nodes.
-- `runtime_config_path` replaces `nullclaw_config_path` in canonical node metadata.
+- `runtime_config_path` is the canonical node runtime metadata path.
 - Deployed workspaces include Nanobot context assets plus OmniClaw inbox/outbox folders.
 - Canonical sample agents `Director_01`, `HR_Head_01`, and `Ops_Head_01` now resolve under the selected company workspace root.
 
@@ -124,7 +127,7 @@ Living operator/developer documentation for current implementation.
   - `DEFAULT`
   - `FORM_STAGE`
 - `POST /v1/skills/actions` and `src/omniclaw/skills/` own catalog mutation, assignment mutation, and filesystem reconciliation.
-- `sync_agent_skills` wipes and rebuilds only the agent workspace `skills/` directory from DB-approved assignments, leaving repo-root `.codex/skills/`, `skills/`, and `.agents/` untouched.
+- `sync_agent_skills` wipes and rebuilds only the agent workspace `skills/` directory from DB-approved assignments, leaving repo-root `.codex/skills/` and `.agents/` untouched.
 - `~/.omniClaw/config.json -> companies.<slug>.skills.default_agent_skill_names` controls company defaults; `provision_agent` seeds those defaults before the initial workspace sync.
 - Manager policy skills (`manage-agent-instructions`, `manage-team-budgets`) are now ordinary loose master skills assigned through `DEFAULT` rows instead of hardcoded file-copy logic.
 - Form activation/workspace sync writes `FORM_STAGE` assignments, and IPC routing re-syncs affected target agents so approved stage skills are restored after any local drift.
@@ -173,11 +176,17 @@ Living operator/developer documentation for current implementation.
   - `run_budget_cycle`, `recalculate_subtree`, `budget_report`
 - `POST /v1/runtime/actions`
   - `gateway_start`, `gateway_stop`, `gateway_status`, `list_agents`, `invoke_prompt`
+  - `process_due_retries`, `retry_now`, `cancel_retry`
   - `invoke_prompt` runs a kernel-mediated low-cost Nanobot CLI prompt against one deployed agent using explicit workspace/config inputs and returns canonical reply/metadata payloads.
+  - retryable LLM/API failures now return `invocation.status=deferred_retry` with persisted retry metadata instead of only a generic immediate failure.
 - `GET /v1/usage/sessions/{session_key}/summary`
   - returns canonical aggregated call count, tokens, cost, timing span, and provider/model breakdown for one session key.
 - `GET /v1/usage/nodes/{node_id}/recent-sessions`
   - returns recent per-session usage summaries grouped by node.
+- `GET /v1/usage/retries`
+  - returns persisted retry state for pending/claimed/completed/cancelled/terminal task retries, with task key, provider/model, failure class, attempt counts, and next-attempt timing.
+- `GET /v1/usage/failure-trends`
+  - returns grouped provider/model failure counts and latest timestamps by normalized failure class.
 - `POST /v1/sessions/export`
   - exports native Nanobot `SessionManager` JSONL transcripts to a target directory and records metadata via `usage` namespace.
 
@@ -211,6 +220,9 @@ Routing behavior:
 - Forms ledger snapshot and append-only decision events are updated atomically per decision call.
 - Form snapshots use optimistic lock versioning; stale transitions return conflict outcome.
 - While kernel is running, background auto-scan periodically performs the same scan path as `POST /v1/ipc/actions` with `action=scan_forms` via non-blocking thread offload.
+- After a successful delivery into `inbox/new`, the IPC router now attempts an immediate agent wake for AGENT holders by calling runtime `invoke_prompt` with a rendered template from `<company-workspace-root>/NEW_INBOX_MESSAGE_PROMPT.md`.
+- The prompt template is user-editable and supports placeholder substitution for `{{agent_name}}`, `{{sender_name}}`, `{{form_id}}`, `{{form_type}}`, `{{stage}}`, `{{stage_skill}}`, `{{subject}}`, `{{delivery_path}}`, `{{archive_path}}`, and `{{target_agent}}`.
+- If `NEW_INBOX_MESSAGE_PROMPT.md` is missing, the form still routes normally and the IPC response reports `wake_trigger.status=skipped`.
 
 Delivered form semantics:
 - `agent` tells the reader which node is currently responsible for the routed stage.
@@ -245,6 +257,7 @@ Supported stage targets:
 - `<company-workspace-root>/master_skills/deploy-new-nanobot-standalone/`
 - `<company-workspace-root>/master_skills/manage-team-budgets/`
 - `<company-workspace-root>/form_archive/<form_type>/<form_id>/...`
+- `<company-workspace-root>/NEW_INBOX_MESSAGE_PROMPT.md`
 - `<company-workspace-root>/nanobot_workspace_templates/`
 - `<company-workspace-root>/nanobots_instructions/<node_name>/AGENTS.md`
 - `<company-workspace-root>/retired/forms/`
@@ -275,10 +288,8 @@ Canonical shipped forms:
   - `scripts/runtime/run_agent.sh --company <slug-or-display-name> --agent-name <agent_name> --message <text> [--session-key <key>]`
 - Monorepo bootstrap installer:
   - `scripts/install/bootstrap_monorepo.sh`
-- Company workspace bootstrap:
-  - `uv run python scripts/company/bootstrap_company_workspace.py --apply --company <slug> --display-name "<Name>" --company-workspace-root <path>`
-- Repo-workspace migration:
-  - `uv run python scripts/company/migrate_repo_workspace.py --apply --company <slug> --source-workspace-root /home/macos/omniClaw/workspace --company-workspace-root <path>`
+- Company workspace requirements:
+  - `docs/company-workspace-requirements.md`
 - Company-context inspection:
   - `uv run python scripts/company/show_company_context.py --company <slug>`
 - Budget action helper:
@@ -310,6 +321,15 @@ Canonical shipped forms:
   - `uv run python scripts/skills/audit_agent_skill_state.py --company <slug>`
 - Prompt log listing helper:
   - `uv run python scripts/runtime/list_prompt_logs.py --company <slug> --agent-name <agent_name> [--limit <n>]`
+- Retry control helpers:
+  - `scripts/runtime/trigger_runtime_action.sh --action process_due_retries`
+  - `scripts/runtime/trigger_runtime_action.sh --action retry_now --task-key <task_key>`
+  - `scripts/runtime/trigger_runtime_action.sh --action cancel_retry --task-key <task_key>`
+  - `scripts/runtime/retry_control.sh --action retry_now --task-key <task_key>`
+  - `scripts/runtime/retry_control.sh --action cancel_retry --task-key <task_key>`
+- Retry/failure reporting helpers:
+  - `scripts/usage/get_retry_state.sh [--node-id <node_id>] [--retry-status <status>] [--limit <n>]`
+  - `scripts/usage/get_failure_trends.sh [--provider <provider>] [--model <model>] [--limit <n>]`
 - Skills wrappers:
   - `scripts/skills/list_master_skills.sh`
   - `scripts/skills/list_active_master_skills.sh`
@@ -331,13 +351,13 @@ Canonical shipped forms:
 - `scripts/budgets/`: budget action helpers
 - `scripts/forms/`: form admin/publish/smoke scripts
 - `scripts/ipc/`: ipc trigger + read/ack helper
-- `scripts/company/`: company workspace bootstrap and migration helpers
+- `scripts/company/`: company workspace inspection helpers and retired legacy bootstrap/migration entrypoints
 - `scripts/company/show_company_context.py`: registry-backed company path/context inspector for operator scripts
 - `scripts/install/`: monorepo environment bootstrap helper
 - `scripts/skills/`: master-skill lifecycle and assignment action wrappers
 - `src/omniclaw/runtime_integration/`: OmniClaw-owned optional runtime hook loaded by Nanobot for usage persistence
 - `third_party/nanobot/`: vendored Nanobot runtime package source
-- `workspace/`: repo-local seed/migration source for company assets and fixtures
+- `tests/fixtures/`: test-only fixture assets; not used by runtime as a workspace fallback
 - `<company-workspace-root>/forms/`: approved form workflow JSON packages
 - `<company-workspace-root>/forms/<form_type>/skills/`: approved stage skill master copies per form type
 - `<company-workspace-root>/master_skills/`: organization-level loose master skills
@@ -367,7 +387,31 @@ Validated evidence from 2026-03-11:
 - recent-session listing for `HR_Head_01` included the verification session
 - post-run budget report showed `HR_Head_01 current_spend=0.08`, `remaining_budget_usd=2.62`, and company `current_total_spend_usd=0.08`
 
+## Retry Lifecycle And Operator Recovery (M13a)
+- Retry classification buckets:
+  - `transient`: short progressive backoff for errors such as 429s, overloads, and transport faults
+  - `budget_recoverable`: long-delay retry windows for exhausted credits/quota/budget conditions
+  - `terminal`: no retry for invalid auth, invalid model/request, and similar permanent failures
+- Canonical persistence:
+  - `agent_task_retries` stores retry state and scheduling metadata
+  - `agent_llm_failure_events` stores provider/model failure telemetry for grouped reporting
+- Retry scheduler:
+  - kernel background loop polls due retries and calls runtime `process_due_retries`
+  - due retries are claimed once before execution to avoid duplicate runs
+- Runtime invoke outcomes:
+  - `completed`
+  - `deferred_retry`
+  - `terminal_failure`
+- Canonical reporting flow:
+  1. Inspect retry backlog: `bash scripts/usage/get_retry_state.sh --apply [--node-id <node_id>] [--retry-status pending]`
+  2. Inspect provider/model incidents: `bash scripts/usage/get_failure_trends.sh --apply [--provider <provider>] [--model <model>]`
+  3. Force immediate retry: `bash scripts/runtime/retry_control.sh --apply --action retry_now --task-key <task_key>`
+  4. Cancel a bad/stale retry: `bash scripts/runtime/retry_control.sh --apply --action cancel_retry --task-key <task_key>`
+- Run metadata artifacts under `<agent-workspace>/drafts/runtime/runs/*.json` now include invocation retry outcome details for success, deferred retry, and terminal failure cases.
+
 ## Verification
+- M13a targeted retry/reporting slice: `29 passed` on `uv run pytest -q tests/test_runtime_actions.py tests/test_runtime_scripts.py tests/test_usage_actions.py tests/test_runtime_retry_scheduler.py tests/test_retry_policy.py tests/test_retry_repository.py`
+- M13a strict validation: `openspec validate --type change m13a-agent-task-retry-hardening --strict`
 - M12 targeted runtime/package slice: `12 passed` on `PYTEST_ADDOPTS='-s' uv run pytest -q tests/test_runtime_actions.py tests/test_runtime_integration.py tests/test_nanobot_prompt_logging.py`
 - M11 targeted regression slice: `35 passed` on `PYTEST_ADDOPTS='-s' uv run pytest -q tests/test_forms_actions.py tests/test_instructions_actions.py tests/test_ipc_actions.py`
 - M11 full suite: `94 passed` on `PYTEST_ADDOPTS='-s' uv run pytest -q`

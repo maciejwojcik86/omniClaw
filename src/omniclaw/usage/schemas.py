@@ -65,3 +65,36 @@ class UsageRecentSessionsResponse(BaseModel):
     node_id: str
     node_name: str
     sessions: list[UsageRecentSessionItem]
+
+
+class RetryStateItem(BaseModel):
+    retry_record_id: str
+    node_id: str
+    task_key: str
+    session_key: str | None
+    provider: str | None
+    model: str | None
+    status: str
+    failure_class: str
+    attempt_count: int
+    max_attempts: int
+    next_attempt_at: datetime | None
+    claimed_at: datetime | None
+    completed_at: datetime | None
+    last_error_message: str | None
+
+
+class RetryStateResponse(BaseModel):
+    items: list[RetryStateItem]
+
+
+class ProviderModelFailureTrendItem(BaseModel):
+    provider: str | None
+    model: str | None
+    failure_class: str
+    failure_count: int
+    latest_failure_at: datetime | None
+
+
+class ProviderModelFailureTrendsResponse(BaseModel):
+    items: list[ProviderModelFailureTrendItem]

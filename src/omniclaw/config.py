@@ -47,6 +47,8 @@ class Settings:
     ipc_router_auto_scan_enabled: bool = True
     budget_auto_cycle_enabled: bool = True
     budget_auto_cycle_poll_interval_seconds: int = 60
+    runtime_retry_scheduler_enabled: bool = True
+    runtime_retry_scheduler_poll_interval_seconds: int = 60
     global_config_path: str | None = None
     company_slug: str | None = None
     company_display_name: str | None = None
@@ -117,6 +119,8 @@ def resolve_company_config_path(
         return Path(raw_path).expanduser().resolve()
 
     preferred = (workspace_root / "config.json").resolve()
+    # Keep the old filename only for explicit compatibility/test flows that bypass
+    # the global company registry. The canonical runtime path is `config.json`.
     legacy = (workspace_root / "company_config.json").resolve()
     if preferred.exists():
         return preferred
@@ -178,6 +182,8 @@ def build_settings(
         company_settings_payload = company_entry.to_payload()
         resolved_company_config_path = None
     else:
+        # Explicit workspace/config overrides remain available for tests and
+        # recovery tooling, but they are not the normal startup contract.
         workspace_root = resolve_company_workspace_root(explicit_workspace_root)
         resolved_company_config_path = resolve_company_config_path(
             workspace_root=workspace_root,
@@ -258,6 +264,18 @@ def build_settings(
             default=_parse_int_from_mapping(
                 company_settings_payload,
                 ("runtime", "budget_auto_cycle_poll_interval_seconds"),
+                60,
+            ),
+        ),
+        runtime_retry_scheduler_enabled=_parse_bool(
+            _env_get(resolved_env, "OMNICLAW_RUNTIME_RETRY_SCHEDULER_ENABLED"),
+            default=_parse_bool_from_mapping(company_settings_payload, ("runtime", "runtime_retry_scheduler_enabled"), True),
+        ),
+        runtime_retry_scheduler_poll_interval_seconds=_parse_int(
+            _env_get(resolved_env, "OMNICLAW_RUNTIME_RETRY_SCHEDULER_POLL_INTERVAL_SECONDS"),
+            default=_parse_int_from_mapping(
+                company_settings_payload,
+                ("runtime", "runtime_retry_scheduler_poll_interval_seconds"),
                 60,
             ),
         ),

@@ -13,6 +13,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from omniclaw.config import build_settings
 from omniclaw.db.base import Base
 from omniclaw.db import models as _models  # noqa: F401
 
@@ -21,12 +22,23 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+_DEFAULT_LEGACY_ALEMBIC_URL = "sqlite:///./workspace/omniclaw.db"
 
 target_metadata = Base.metadata
 
 
+def _resolve_alembic_database_url() -> str:
+    configured = (config.get_main_option("sqlalchemy.url") or "").strip()
+    if configured and configured != _DEFAULT_LEGACY_ALEMBIC_URL:
+        return configured
+    settings = build_settings()
+    resolved = settings.database_url
+    config.set_main_option("sqlalchemy.url", resolved)
+    return resolved
+
+
 def run_migrations_offline() -> None:
-    url = config.get_main_option("sqlalchemy.url")
+    url = _resolve_alembic_database_url()
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -39,8 +51,11 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
+    resolved_url = _resolve_alembic_database_url()
+    section = config.get_section(config.config_ini_section, {})
+    section["sqlalchemy.url"] = resolved_url
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        section,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )

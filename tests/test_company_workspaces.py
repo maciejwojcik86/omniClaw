@@ -65,56 +65,8 @@ def test_company_path_resolution_isolated_between_two_roots(tmp_path: Path) -> N
     assert alpha_paths.form_archive_root != beta_paths.form_archive_root
 
 
-def test_migrate_repo_workspace_copies_and_rewrites_paths(tmp_path: Path) -> None:
-    source_root = tmp_path / "repo-workspace"
-    target_root = tmp_path / "company-a"
+def test_migrate_repo_workspace_script_is_retired(tmp_path: Path) -> None:
     global_config_path = tmp_path / ".omniClaw" / "config.json"
-    source_root.mkdir(parents=True, exist_ok=True)
-    (source_root / "agents" / "Worker_01" / "workspace").mkdir(parents=True, exist_ok=True)
-    (source_root / "master_skills" / "hello-skill").mkdir(parents=True, exist_ok=True)
-    (source_root / "nanobots_instructions" / "Worker_01").mkdir(parents=True, exist_ok=True)
-    (source_root / "nanobot_workspace_templates").mkdir(parents=True, exist_ok=True)
-    (source_root / "forms" / "message").mkdir(parents=True, exist_ok=True)
-    (source_root / "master_skills" / "hello-skill" / "SKILL.md").write_text(
-        f"Refer to {source_root}/agents/Worker_01/workspace\n",
-        encoding="utf-8",
-    )
-    (source_root / "company_config.json").write_text(
-        json.dumps(
-            {
-                "instructions": {"access_scope": "descendant"},
-                "skills": {"default_agent_skill_names": ["form_workflow_authoring"]},
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    (source_root / "company_models.yaml").write_text("models: []\n", encoding="utf-8")
-    (source_root / "README.md").write_text("Source workspace\n", encoding="utf-8")
-    shutil.copytree(ROOT / "workspace" / "nanobot_workspace_templates", source_root / "nanobot_workspace_templates", dirs_exist_ok=True)
-    shutil.copytree(ROOT / "workspace" / "forms" / "message", source_root / "forms" / "message", dirs_exist_ok=True)
-
-    database_url = f"sqlite:///{source_root / 'omniclaw.db'}"
-    migrate_database_to_head(database_url)
-    repository = KernelRepository(create_session_factory(database_url))
-    repository.create_node(
-        node_type=NodeType.AGENT,
-        name="Worker_01",
-        status=NodeStatus.ACTIVE,
-        workspace_root=str((source_root / "agents" / "Worker_01" / "workspace").resolve()),
-        runtime_config_path=str((source_root / "agents" / "Worker_01" / "config.json").resolve()),
-        instruction_template_root=str((source_root / "nanobots_instructions" / "Worker_01").resolve()),
-    )
-    repository.upsert_master_skill(
-        name="hello-skill",
-        description="Hello",
-        version="1.0.0",
-        validation_status=SkillValidationStatus.VALIDATED,
-        lifecycle_status=MasterSkillLifecycleStatus.ACTIVE,
-        master_path=str((source_root / "master_skills" / "hello-skill").resolve()),
-        form_type_key=None,
-    )
-
     env = {**os.environ, "PYTHONPATH": f"{SRC}{os.pathsep}{os.environ.get('PYTHONPATH', '')}".rstrip(os.pathsep)}
     result = subprocess.run(
         [
@@ -127,38 +79,14 @@ def test_migrate_repo_workspace_copies_and_rewrites_paths(tmp_path: Path) -> Non
             "acme",
             "--global-config-path",
             str(global_config_path),
-            "--source-workspace-root",
-            str(source_root),
-            "--company-workspace-root",
-            str(target_root),
         ],
         cwd=ROOT,
         env=env,
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
     )
 
-    assert "Migration applied." in result.stdout
-    assert not (target_root / "config.json").exists()
-    assert not (target_root / "company_config.json").exists()
-    assert not (target_root / "models" / "company_models.yaml").exists()
-
-    registry_payload = json.loads(global_config_path.read_text(encoding="utf-8"))
-    company_entry = registry_payload["companies"]["acme"]
-    assert company_entry["display_name"] == "Acme"
-    assert company_entry["workspace_root"] == str(target_root.resolve())
-    assert company_entry["skills"]["default_agent_skill_names"] == ["form_workflow_authoring"]
-    assert company_entry["models"] == []
-
-    target_repository = KernelRepository(create_session_factory(f"sqlite:///{target_root / 'omniclaw.db'}"))
-    node = target_repository.get_node(node_name="Worker_01")
-    assert node is not None
-    assert node.workspace_root == str((target_root / "agents" / "Worker_01" / "workspace").resolve())
-    assert node.runtime_config_path == str((target_root / "agents" / "Worker_01" / "config.json").resolve())
-    assert node.instruction_template_root == str((target_root / "nanobots_instructions" / "Worker_01").resolve())
-
-    skill = target_repository.get_master_skill(name="hello-skill")
-    assert skill is not None
-    assert skill.master_path == str((target_root / "master_skills" / "hello-skill").resolve())
-    assert str(target_root) in (target_root / "master_skills" / "hello-skill" / "SKILL.md").read_text(encoding="utf-8")
+    assert result.returncode == 1
+    assert "has been retired" in result.stdout
+    assert "docs/company-workspace-requirements.md" in result.stdout

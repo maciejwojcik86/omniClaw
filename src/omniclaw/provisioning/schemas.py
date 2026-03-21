@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class WorkspaceRequest(BaseModel):
@@ -36,10 +36,7 @@ class ProvisioningActionRequest(BaseModel):
     target_node_id: str | None = None
     target_node_name: str | None = None
     autonomy_level: int = 2
-    runtime_config_path: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("runtime_config_path", "nullclaw_config_path"),
-    )
+    runtime_config_path: str | None = Field(default=None)
     role_name: str | None = None
     primary_model: str | None = None
     linux_password: str | None = None

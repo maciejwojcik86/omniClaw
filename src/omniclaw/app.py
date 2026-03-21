@@ -98,16 +98,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except asyncio.TimeoutError:
                 continue
 
+    async def _runtime_retry_loop(stop_event: asyncio.Event) -> None:
+        interval = max(1, resolved_settings.runtime_retry_scheduler_poll_interval_seconds)
+        runtime_service = RuntimeService(settings=resolved_settings, repository=repository, mode=resolved_settings.runtime_mode)
+        while not stop_event.is_set():
+            try:
+                result = await asyncio.to_thread(runtime_service.execute, RuntimeActionRequest(action="process_due_retries"))
+                processed = int(result.get("processed_count", 0))
+                if processed:
+                    logger.info("runtime retry tick: processed=%s", processed)
+            except Exception:
+                logger.exception("runtime retry tick failed")
+
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                continue
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         stop_event: asyncio.Event | None = None
         scan_task: asyncio.Task[None] | None = None
         budget_task: asyncio.Task[None] | None = None
+        retry_task: asyncio.Task[None] | None = None
         auto_scan_enabled = (
             resolved_settings.ipc_router_auto_scan_enabled and resolved_settings.environment.lower() != "test"
         )
         budget_auto_cycle_enabled = (
             resolved_settings.budget_auto_cycle_enabled and resolved_settings.environment.lower() != "test"
+        )
+        runtime_retry_enabled = (
+            resolved_settings.runtime_retry_scheduler_enabled and resolved_settings.environment.lower() != "test"
         )
         if auto_scan_enabled:
             stop_event = asyncio.Event()
@@ -124,6 +145,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "budget auto-cycle enabled (interval=%ss)",
                 max(1, resolved_settings.budget_auto_cycle_poll_interval_seconds),
             )
+        if runtime_retry_enabled:
+            if stop_event is None:
+                stop_event = asyncio.Event()
+            retry_task = asyncio.create_task(_runtime_retry_loop(stop_event))
+            logger.info(
+                "runtime retry scheduler enabled (interval=%ss)",
+                max(1, resolved_settings.runtime_retry_scheduler_poll_interval_seconds),
+            )
         try:
             yield
         finally:
@@ -137,6 +166,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 budget_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await budget_task
+            if retry_task is not None:
+                retry_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await retry_task
 
     app = FastAPI(title=resolved_settings.app_name, lifespan=lifespan)
 

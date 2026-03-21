@@ -2,7 +2,7 @@
 name: send_message
 description: Agent SOP for drafting, reviewing, and submitting OmniClaw MESSAGE files from outbox drafts to pending queue.
 license: MIT
-compatibility: Nullclaw agent workspace with OmniClaw M05 file IPC router
+compatibility: Nanobot agent workspace with OmniClaw M05 file IPC router
 metadata:
   author: omniclaw
   version: "0.1"

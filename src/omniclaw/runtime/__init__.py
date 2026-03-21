@@ -1,4 +1,11 @@
 from omniclaw.runtime.schemas import RuntimeActionRequest
-from omniclaw.runtime.service import RuntimeService
 
 __all__ = ["RuntimeActionRequest", "RuntimeService"]
+
+
+def __getattr__(name: str):
+    if name == "RuntimeService":
+        from omniclaw.runtime.service import RuntimeService
+
+        return RuntimeService
+    raise AttributeError(name)

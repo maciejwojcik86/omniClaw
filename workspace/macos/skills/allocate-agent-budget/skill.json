@@ -1,6 +1,0 @@
-{
-  "name": "allocate-agent-budget",
-  "version": "1.0.0",
-  "description": "Perform FINANCE_REVIEW for deploy_new_agent and decide whether budget is approved or returned to HR.",
-  "author": "omniclaw-kernel"
-}

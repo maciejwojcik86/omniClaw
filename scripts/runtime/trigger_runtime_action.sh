@@ -5,12 +5,12 @@ usage() {
   cat <<'USAGE'
 Usage:
   trigger_runtime_action.sh [--apply] [--kernel-url <url>] [--endpoint <path>] --action <action>
-                            [--node-id <id>] [--node-name <name>]
+                            [--node-id <id>] [--node-name <name>] [--task-key <key>]
                             [--gateway-host <host>] [--gateway-port <port>] [--force-restart <true|false>]
                             [--prompt <text>] [--session-key <key>] [--markdown <true|false>] [--include-logs <true|false>]
 
 Default mode is dry-run. Use --apply to execute HTTP POST.
-Actions: gateway_start, gateway_stop, gateway_status, list_agents, invoke_prompt
+Actions: gateway_start, gateway_stop, gateway_status, list_agents, invoke_prompt, process_due_retries, retry_now, cancel_retry
 USAGE
 }
 
@@ -27,6 +27,7 @@ prompt=""
 session_key="cli:verification"
 markdown="false"
 include_logs="false"
+task_key=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -82,6 +83,10 @@ while [[ $# -gt 0 ]]; do
       include_logs="$2"
       shift 2
       ;;
+    --task-key)
+      task_key="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -101,7 +106,7 @@ if [[ -z "$action" ]]; then
 fi
 
 case "$action" in
-  gateway_start|gateway_stop|gateway_status|list_agents|invoke_prompt)
+  gateway_start|gateway_stop|gateway_status|list_agents|invoke_prompt|process_due_retries|retry_now|cancel_retry)
     ;;
   *)
     echo "Invalid --action '$action'" >&2
@@ -110,7 +115,7 @@ case "$action" in
     ;;
 esac
 
-if [[ "$action" != "list_agents" && -z "$node_id" && -z "$node_name" ]]; then
+if [[ "$action" != "list_agents" && "$action" != "process_due_retries" && "$action" != "retry_now" && "$action" != "cancel_retry" && -z "$node_id" && -z "$node_name" ]]; then
   echo "--node-id or --node-name is required for action '$action'" >&2
   exit 1
 fi
@@ -152,6 +157,13 @@ if [[ "$action" == "invoke_prompt" && -z "$prompt" ]]; then
   exit 1
 fi
 
+if [[ "$action" == "retry_now" || "$action" == "cancel_retry" ]]; then
+  if [[ -z "$task_key" ]]; then
+    echo "--task-key is required for action '$action'" >&2
+    exit 1
+  fi
+fi
+
 node_id_json="null"
 node_name_json="null"
 if [[ -n "$node_id" ]]; then
@@ -175,7 +187,8 @@ cat > "$payload_file" <<JSON
   "prompt": $(python3 -c 'import json,sys; print(json.dumps(sys.argv[1] if sys.argv[1] else None))' "$prompt"),
   "session_key": $(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$session_key"),
   "markdown": $markdown,
-  "include_logs": $include_logs
+  "include_logs": $include_logs,
+  "task_key": $(python3 -c 'import json,sys; print(json.dumps(sys.argv[1] if sys.argv[1] else None))' "$task_key")
 }
 JSON
 

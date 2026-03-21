@@ -1565,7 +1565,7 @@ def test_forms_workspace_sync_distributed_deploy_wrapper_finds_repo_root(
         encoding="utf-8",
     )
     shutil.copytree(
-        ROOT / "workspace" / "forms" / "deploy_new_agent" / "skills" / "deploy-new-nanobot",
+        ROOT / "tests" / "fixtures" / "deploy-new-nanobot-skill",
         deploy_skill_dir,
         dirs_exist_ok=True,
     )

@@ -10,6 +10,10 @@ from nanobot.session.manager import SessionManager
 
 from omniclaw.db.repository import KernelRepository
 from omniclaw.usage.schemas import (
+    ProviderModelFailureTrendItem,
+    ProviderModelFailureTrendsResponse,
+    RetryStateItem,
+    RetryStateResponse,
     SessionExportRequest,
     SessionExportResponse,
     UsageRecentSessionItem,
@@ -127,3 +131,54 @@ class UsageService:
             for row in rows
         ]
         return UsageRecentSessionsResponse(node_id=node.id, node_name=node.name, sessions=sessions)
+
+    def list_retry_state(
+        self,
+        *,
+        node_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> RetryStateResponse:
+        items = self.repo.list_agent_task_retries(node_id=node_id, status=status, limit=limit)
+        return RetryStateResponse(
+            items=[
+                RetryStateItem(
+                    retry_record_id=item.id,
+                    node_id=item.node_id,
+                    task_key=item.task_key,
+                    session_key=item.session_key,
+                    provider=item.provider,
+                    model=item.model,
+                    status=item.status,
+                    failure_class=item.failure_class.value if hasattr(item.failure_class, "value") else str(item.failure_class),
+                    attempt_count=item.attempt_count,
+                    max_attempts=item.max_attempts,
+                    next_attempt_at=item.next_attempt_at,
+                    claimed_at=item.claimed_at,
+                    completed_at=item.completed_at,
+                    last_error_message=item.last_error_message,
+                )
+                for item in items
+            ]
+        )
+
+    def get_provider_model_failure_trends(
+        self,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        limit: int = 50,
+    ) -> ProviderModelFailureTrendsResponse:
+        rows = self.repo.summarize_llm_failures_by_provider_model(provider=provider, model=model, limit=limit)
+        return ProviderModelFailureTrendsResponse(
+            items=[
+                ProviderModelFailureTrendItem(
+                    provider=row["provider"],
+                    model=row["model"],
+                    failure_class=row["failure_class"],
+                    failure_count=row["failure_count"],
+                    latest_failure_at=row["latest_failure_at"],
+                )
+                for row in rows
+            ]
+        )

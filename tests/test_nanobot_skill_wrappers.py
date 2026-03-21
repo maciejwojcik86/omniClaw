@@ -10,8 +10,9 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CANONICAL_SKILL_DIR = REPO_ROOT / "workspace" / "forms" / "deploy_new_agent" / "skills" / "deploy-new-nanobot"
-TEMPLATE_ROOT = REPO_ROOT / "workspace" / "nanobot_workspace_templates"
+FIXTURES_ROOT = REPO_ROOT / "tests" / "fixtures"
+CANONICAL_SKILL_DIR = FIXTURES_ROOT / "deploy-new-nanobot-skill"
+TEMPLATE_ROOT = FIXTURES_ROOT / "nanobot_workspace_templates"
 
 
 def _seed_repo_root(repo_root: Path) -> None:
@@ -71,21 +72,21 @@ def _copy_skill_dir(*, repo_root: Path, source_relative: str, target_relative: s
     ("source_relative", "target_relative", "script_name", "args", "expected_text"),
     [
         (
-            "workspace/forms/deploy_new_agent/skills/deploy-new-nanobot",
+            "tests/fixtures/deploy-new-nanobot-skill",
             "workspace/forms/deploy_new_agent/skills/deploy-new-nanobot",
             "deploy_new_nanobot.sh",
             ["--node-name", "Test_Agent_01", "--manager-node-name", "Director_01"],
             "DRY-RUN provisioning payload:",
         ),
         (
-            "workspace/macos/skills/deploy-new-nanobot",
+            "tests/fixtures/deploy-new-nanobot-skill",
             "workspace/macos/skills/deploy-new-nanobot",
             "deploy_new_nanobot_agent.sh",
             ["--node-name", "Test_Agent_01", "--manager-node-name", "Director_01"],
             "DRY-RUN provisioning payload:",
         ),
         (
-            "workspace/master_skills/deploy-new-nanobot-standalone",
+            "tests/fixtures/deploy-new-nanobot-standalone",
             "workspace/master_skills/deploy-new-nanobot-standalone",
             "provision_agent_workflow.sh",
             ["--username", "agent_test", "--manager-node-name", "Director_01"],
@@ -138,7 +139,7 @@ def test_create_workspace_tree_uses_nanobot_workspace_templates(tmp_path: Path) 
     }
     target_dir = _copy_skill_dir(
         repo_root=repo_root,
-        source_relative="workspace/forms/deploy_new_agent/skills/deploy-new-nanobot",
+        source_relative="tests/fixtures/deploy-new-nanobot-skill",
         target_relative="workspace/forms/deploy_new_agent/skills/deploy-new-nanobot",
     )
     workspace_root = repo_root / "workspace" / "agents" / "Template_Test_01" / "workspace"
@@ -177,7 +178,7 @@ def test_init_nanobot_config_uses_nanobot_workspace_template(tmp_path: Path) -> 
     }
     target_dir = _copy_skill_dir(
         repo_root=repo_root,
-        source_relative="workspace/forms/deploy_new_agent/skills/deploy-new-nanobot",
+        source_relative="tests/fixtures/deploy-new-nanobot-skill",
         target_relative="workspace/forms/deploy_new_agent/skills/deploy-new-nanobot",
     )
     workspace_root = repo_root / "workspace" / "agents" / "Template_Test_01" / "workspace"
@@ -217,7 +218,7 @@ def test_write_agent_instructions_uses_nanobot_workspace_template(tmp_path: Path
     }
     target_dir = _copy_skill_dir(
         repo_root=repo_root,
-        source_relative="workspace/forms/deploy_new_agent/skills/deploy-new-nanobot",
+        source_relative="tests/fixtures/deploy-new-nanobot-skill",
         target_relative="workspace/forms/deploy_new_agent/skills/deploy-new-nanobot",
     )
     workspace_root = repo_root / "workspace" / "agents" / "Template_Test_01" / "workspace"

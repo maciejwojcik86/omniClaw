@@ -36,8 +36,6 @@ class SkillsService:
         self._company_paths: CompanyPaths = build_company_paths(self._settings)
         self._repo_root = _repo_root()
         self._company_master_skills_root = self._company_paths.master_skills_root
-        if not self._company_master_skills_root.exists():
-            self._company_master_skills_root = self._repo_root / "workspace" / "master_skills"
 
     def execute(self, request: SkillsActionRequest) -> dict[str, object]:
         self.sync_company_master_skill_catalog()

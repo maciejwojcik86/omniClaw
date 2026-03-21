@@ -6,13 +6,13 @@
 
 **Target Hardware:** Any Linux Instance (Ubuntu preferred)
 
-**Core Tech Stack:** Linux, Nullclaw (Zig/Node), SQLite/PostgreSQL, FastAPI/Go/Rust (Kernel), LiteLLM (Proxy)
+**Core Tech Stack:** Linux, Nanobot, SQLite/PostgreSQL, FastAPI/Go/Rust (Kernel), LiteLLM (Proxy)
 
 ## **1\. Executive Summary & Vision**
 
 The goal of this project is to build an Operating System ("OmniClaw" or "The Kernel") that orchestrates a self-organizing, self-improving Hierarchical Multi-Agent System of OpenClaw like agents.
 
-Unlike traditional multi-agent frameworks that run multiple agents within a single process and share memory, OmniClaw OS enforces strict OS-level isolation. Each agent operates as a distinct Linux user, utilizing the lightweight Nullclaw framework. The agents are fundamentally untrusted and restricted.
+Unlike traditional multi-agent frameworks that run multiple agents within a single process and share memory, OmniClaw OS enforces strict workspace and runtime isolation. Each agent operates from its own Nanobot config/workspace pair under a selected company workspace root. The agents are fundamentally untrusted and restricted.
 
 **Core Paradigm Shifts:**
 
@@ -190,7 +190,7 @@ Tools and external API calls are treated as "Skills". Before a new script become
 ### **6.1 System Infrastructure**
 
 * **OS:** Any Linux Server OS (Debian/Ubuntu recommended).  
-* **Agent Runtime:** Nullclaw wrapped in a systemd service for each agent user.  
+* **Agent Runtime:** Nanobot launched with explicit config/workspace paths per agent.  
 * **Proxy:** LiteLLM running locally. LiteLLM handles API key translation, load balancing to cloud models, and enforces the daily token/cost budgets assigned by the Kernel.
 
 ### **6.2 Database Schema (The Canonical State)**
@@ -254,24 +254,24 @@ Runs every 5 seconds. Scans all /outbox/send/ folders.
 
 * Parses YAML frontmatter.  
 * Updates forms\_ledger in the DB.  
-* If status \== approved on a form, it triggers the function (e.g. spawn new user and set up nullclaw, or run other scripts)  
+* If status \== approved on a form, it triggers the function (e.g. provision a new Nanobot agent workspace, or run other scripts)  
 * Moves the physical .md file to the target's /inbox/new/ folder (and move sender copy to 'sent' subfolder)
 
 Simple eform example
 * **Sending Mail:** An agent creates a .md file in /workspace/outbox/send/ with YAML frontmatter.  
 * **Kernel Routing:** The Kernel daemon detects the file, reads the frontmatter, verifies the sender has permission to message the target, executes budget transfers if present, and securely copies the file to the target's /inbox/new/. 
-* **Receiving Mail (Heartbeat):** Each Nullclaw agent has a heartbeat.md file that triggers on wake. It checks /inbox/new/, processes the contents, and moves the email to /inbox/read/.
+* **Receiving Mail (Heartbeat):** Each Nanobot agent has a heartbeat.md file that triggers on wake. It checks /inbox/new/, processes the contents, and moves the email to /inbox/read/.
 Alternatively we can use claw agent Hearthbeat.md to prompt it to read and act on new unread files in the inbox
 
 
 
 
 #### **B. Context Injector Daemon (Dynamic Prompt Templating)**
-Runs prior to Nullclaw execution. Queries the budgets table and LiteLLM logs. Parses /persona\_template.md, replaces all {{variables}}, and overwrites AGENTS.md as read-only.
+Runs prior to Nanobot execution. Queries the budgets table and LiteLLM logs. Parses /persona\_template.md, replaces all {{variables}}, and overwrites AGENTS.md as read-only.
 
 * **Purpose:** Provides agents with real-time state awareness and situational control without requiring LLM calls to fetch basic environment data.  
 * **Implementation:** Agents do not edit their own core system instructions. Instead, HR agents draft a persona\_template.md containing placeholders (e.g., {{current\_time}}, {{budget\_remaining}}, {{subordinates}}, {{active\_okrs}}, {{company\_announcements}}).  
-* **Kernel Action:** A continuous background process monitors the database and the templates. It parses persona\_template.md, replaces all {{variables}} with actual live values from the DB, and renders the final, read-only AGENTS.md file into the workspace. Nullclaw loads AGENTS.md directly into the system prompt on every execution.
+* **Kernel Action:** A continuous background process monitors the database and the templates. It parses persona\_template.md, replaces all {{variables}} with actual live values from the DB, and renders the final, read-only AGENTS.md file into the workspace. Nanobot loads AGENTS.md directly into the system prompt on every execution.
 
 
 #### **C. The Budget Sync Daemon**
@@ -284,7 +284,7 @@ Runs daily at 00:00 UTC. Resets all current\_spend to 0\. Recalculates current\_
 POST /api/v1/kernel/nodes/spawn
 
 * **Purpose:** Requests the creation of a new Linux user and subordinate agent workspace.  
-* **Kernel Action:** Checks if the requesting Node has Manager privileges. Runs Linux useradd, generates the workspace, drops the initial persona\_template.md, renders AGENTS.md, and starts the Nullclaw systemd service.
+* **Kernel Action:** Checks if the requesting Node has Manager privileges, generates the agent config/workspace, drops the initial persona\_template.md, renders AGENTS.md, and starts the Nanobot runtime when required.
 
 #### **E. Request & Approval API**
 
@@ -298,7 +298,7 @@ POST /api/v1/kernel/requests/submit
 PUT /api/v1/kernel/instructions/update\_template
 
 * **Purpose:** Allows Managers/HR to rewrite the instruction templates of a subordinate.  
-* **Kernel Action:** Overwrites the target's persona\_template.md. The Context Injector instantly detects the change, rebuilds AGENTS.md, and triggers a systemctl restart nullclaw\_agent\_xyz.
+* **Kernel Action:** Overwrites the target's persona\_template.md. The Context Injector instantly detects the change, rebuilds AGENTS.md, and refreshes the target's runtime context on the next execution cycle.
 
 ## **7\. The Human-in-the-Loop (Nodes Anywhere)**
 
@@ -306,7 +306,7 @@ Humans are treated as standard nodes in the hierarchy, meaning they can exist an
 
 * **Top-Level (The Board):** Agent\_000 (The Director) reports directly to Human\_01. The human sets the overarching strategy and funds the company.  
 * **Mid-Level (Targeted QA):** A Human Node can be placed underneath a specific Dev Manager Agent for critical HITL approvals inside a workflow without escalating to the very top.  
-* **The Config Dashboard:** A lightweight web UI served by the Kernel to allow humans to view the Org Chart, adjust auto-approval thresholds, and hit a master "Kill Switch" to stop all Nullclaw services.
+* **The Config Dashboard:** A lightweight web UI served by the Kernel to allow humans to view the Org Chart, adjust auto-approval thresholds, and hit a master "Kill Switch" to stop all agent gateways.
 
 ## **8\. Hypothetical Corporate Workflows (For AI Developer Context)**
 
@@ -357,14 +357,14 @@ This roadmap is designed for an AI Coding Agent (e.g., Claude Code) to execute i
 * \[ \] Build the Context Injector Daemon: Parses persona\_template.md, pulls variables from SQLite, and renders AGENTS.md.  
 * *Definition of Done:* User A receives mail in their inbox, and their AGENTS.md automatically updates to show {{budget\_remaining}} dropped by the cost of the transaction.
 
-### **Phase 3: The Genesis Boot (Integrating Nullclaw)**
+### **Phase 3: The Genesis Boot (Integrating Nanobot)**
 
 **Goal:** Bring the first agent online.
 
-* \[ \] Install Nullclaw framework.  
+* \[ \] Install Nanobot runtime.  
 * \[ \] Create the systemd wrapper template.  
 * \[ \] Implement the Context Stacking logic (combining Constitution \+ OKRs \+ AGENTS.md).  
-* \[ \] Implement the Heartbeat cycle logic in Nullclaw to process /inbox/new/ and update TODO.md.  
+* \[ \] Implement the Heartbeat cycle logic in Nanobot to process /inbox/new/ and update TODO.md.  
 * \[ \] Spawn Agent\_000 (The Director) and Human\_01.  
 * *Definition of Done:* Human sends a webhook message that drops a .md file into the Director's inbox; Director wakes up, reads it, logs it in DECISIONS.md, and routes a response back.
 
@@ -387,7 +387,7 @@ This roadmap is designed for an AI Coding Agent (e.g., Claude Code) to execute i
 
 ## **10\. Future Considerations & Scaling**
 
-* **Multi-Node Clusters:** As the swarm grows beyond 50-100 agents, I/O or CPU may bottleneck. The Kernel should be designed to support Kubernetes (K3s), allowing Nullclaw agents to be distributed across a cluster of Linux VMs while the Kernel maintains the central DB.  
+* **Multi-Node Clusters:** As the swarm grows beyond 50-100 agents, I/O or CPU may bottleneck. The Kernel should be designed to support Kubernetes (K3s), allowing Nanobot agents to be distributed across a cluster of Linux VMs while the Kernel maintains the central DB.  
 * **Memory Vector Databases:** Integrating a local vector database (like ChromaDB) managed by the Kernel. Agents could query a "Company Memory" endpoint to find past solutions or historical code snippets, rather than solely relying on their local text-based memory files.
 
 ## **11\. Development Roadmap (MVP Phasing)**
@@ -403,10 +403,10 @@ This roadmap is designed for an AI Coding Agent (e.g., Claude Code) to execute i
 * \[ \] Implement YAML parser daemon to move files and update forms\_ledger.  
 * \[ \] Setup LiteLLM proxy and the Waterfall Budget logic in the DB.
 
-### **Phase 3: Context Injector & Nullclaw Integration**
+### **Phase 3: Context Injector & Nanobot Integration**
 
 * \[ \] Write the templating engine to inject DB variables into AGENTS.md.  
-* \[ \] Install Nullclaw, configuring its heartbeat to read /inbox/new/.
+* \[ \] Install Nanobot, configuring its heartbeat to read /inbox/new/.
 
 ### **Phase 4: Corporate Workflows (The Skills)**
 

@@ -64,6 +64,7 @@ Host validation:
 - Runtime endpoint returns `mode`, `gateway.status`, and serialized `node.gateway_*` values.
 - `gateway_start` updates `gateway_running=true` and `gateway_started_at`.
 - `gateway_stop` updates `gateway_running=false` and `gateway_stopped_at`.
+- `invoke_prompt` returns canonical invocation metadata and writes run metadata under `<workspace>/drafts/runtime/runs`.
 - Metadata JSON files are written under `<workspace>/drafts/runtime/runs`.
 
 ## Fallback

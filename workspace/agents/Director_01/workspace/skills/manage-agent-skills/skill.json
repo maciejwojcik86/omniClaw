@@ -1,6 +1,0 @@
-{
-  "name": "manage-agent-skills",
-  "version": "1.0.0",
-  "description": "List, assign, and remove approved loose master skills for target agents or subordinate agents.",
-  "author": "omniclaw-kernel"
-}

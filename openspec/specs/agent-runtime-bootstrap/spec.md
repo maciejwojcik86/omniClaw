@@ -1,7 +1,7 @@
 # agent-runtime-bootstrap Specification
 
 ## Purpose
-Provide canonical runtime bootstrap and gateway lifecycle control for deployed Nullclaw agents, including auditable metadata capture, canonical DB runtime-state tracking, and baseline human-supervisor hierarchy setup needed for subsequent workflow-routing milestones.
+Provide canonical runtime bootstrap and gateway lifecycle control for deployed Nanobot agents, including auditable metadata capture, canonical DB runtime-state tracking, and baseline human-supervisor hierarchy setup needed for subsequent workflow-routing milestones.
 ## Requirements
 ### Requirement: Runtime Bootstrap SHALL Provide Gateway Control Actions
 The kernel SHALL expose runtime control actions to start, stop, and inspect agent gateways for provisioned Nanobot agents.
@@ -19,11 +19,16 @@ The kernel SHALL expose runtime control actions to start, stop, and inspect agen
 - **THEN** the kernel reports current runtime state using the tracked Nanobot process metadata for that agent
 
 ### Requirement: Runtime Bootstrap SHALL Capture Run Metadata
-The runtime bootstrap workflow SHALL capture run metadata for every execution attempt.
+The runtime bootstrap workflow SHALL capture run metadata for every execution attempt, including retry classification and deferred retry scheduling outcomes when a run fails with a retryable LLM/API condition.
 
 #### Scenario: Runtime launch completes
 - **WHEN** the runtime command exits (success or failure)
 - **THEN** run metadata includes start/end timestamps, effective command, exit status, and output artifact paths
+
+#### Scenario: Retryable failure schedules deferred work
+- **WHEN** runtime execution fails with a retryable LLM/API condition
+- **THEN** run metadata records the normalized failure classification
+- **AND** includes whether a deferred retry was scheduled and when the next attempt is due
 
 ### Requirement: Kernel DB SHALL Track Agent Gateway Runtime State
 The kernel database SHALL track whether each deployed Nanobot-backed agent gateway is currently running and the latest enable/stop timestamps.
@@ -91,8 +96,8 @@ Gateway start actions MUST validate host input and execute Nanobot launch comman
 - **WHEN** a gateway start request uses an invalid or unsafe host value
 - **THEN** the request fails with HTTP 422 and no gateway process is started
 
-### Requirement: Runtime Bootstrap SHALL Launch from Canonical Nanobot Config and Workspace Paths
-The kernel SHALL launch agent runtime using Nanobot and the node's canonical Nanobot config path `workspace/agents`.
+### Requirement: Runtime Bootstrap SHALL Launch From Canonical Nanobot Config And Workspace Paths
+The kernel SHALL launch agent runtime using Nanobot and the node's canonical Nanobot config path and workspace root.
 
 #### Scenario: Gateway start resolves Nanobot runtime inputs
 - **WHEN** runtime bootstrap is requested for an active provisioned agent

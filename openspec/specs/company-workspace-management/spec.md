@@ -62,16 +62,15 @@ OmniClaw SHALL support multiple isolated company environments by allowing separa
 - **THEN** each process reads its own forms, skills, templates, settings, and database from its selected workspace
 - **AND** no company-owned runtime state is shared implicitly between those roots
 
-### Requirement: Kernel SHALL Provide Company Workspace Bootstrap And Migration Tooling
-The system SHALL provide tooling to scaffold a fresh company workspace and to migrate an existing repo-local company workspace into a selected external company workspace while registering that company in the global OmniClaw config.
+### Requirement: Company Workspace Setup SHALL Use Direct Registry-Backed Initialization
+The system SHALL treat the selected external company workspace as the only source of truth and SHALL rely on direct workspace creation plus global-registry registration rather than on repo-local bootstrap or migration flows.
 
-#### Scenario: Operator bootstraps a fresh company workspace
-- **WHEN** an operator runs the company-workspace init flow
-- **THEN** the required directory layout is created under the selected workspace root
+#### Scenario: Operator prepares a fresh company workspace
+- **WHEN** an operator creates a company workspace following the documented requirements
+- **THEN** the required directory layout exists under the selected workspace root
 - **AND** the selected company entry is created or updated in the global OmniClaw config
 
-#### Scenario: Operator migrates repo-local workspace content
-- **WHEN** an operator runs the migration flow against an existing repo-local OmniClaw workspace
-- **THEN** company-owned runtime assets are copied or moved into the selected company workspace
-- **AND** legacy company settings are written into the global OmniClaw config
-- **AND** the tooling reports any missing or skipped assets before the operator switches the kernel to the new company reference
+#### Scenario: Retired repo-local bootstrap entrypoints are used
+- **WHEN** an operator invokes a retired repo-local bootstrap or migration entrypoint
+- **THEN** the command fails fast
+- **AND** points the operator at the direct company-workspace setup documentation

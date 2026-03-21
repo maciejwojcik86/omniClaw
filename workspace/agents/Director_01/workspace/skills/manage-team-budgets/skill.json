@@ -1,6 +1,0 @@
-{
-  "name": "manage-team-budgets",
-  "version": "1.0.0",
-  "description": "Kernel-backed workflow for managers to inspect team budgets, update direct-report waterfall allocations, and understand budget change notices.",
-  "author": "omniclaw-kernel"
-}

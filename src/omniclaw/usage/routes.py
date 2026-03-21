@@ -5,6 +5,8 @@ from collections.abc import Callable
 from fastapi import APIRouter, HTTPException, Query, status
 
 from omniclaw.usage.schemas import (
+    ProviderModelFailureTrendsResponse,
+    RetryStateResponse,
     SessionExportRequest,
     SessionExportResponse,
     UsageRecentSessionsResponse,
@@ -48,5 +50,23 @@ def build_usage_router(service_factory: Callable[[], UsageService]) -> APIRouter
             detail = str(e)
             status_code = status.HTTP_404_NOT_FOUND if detail.startswith("Node ") else status.HTTP_400_BAD_REQUEST
             raise HTTPException(status_code=status_code, detail=detail)
+
+    @router.get("/usage/retries", response_model=RetryStateResponse)
+    def list_retry_state(
+        node_id: str | None = Query(default=None),
+        retry_status: str | None = Query(default=None),
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> RetryStateResponse:
+        usage_svc = service_factory()
+        return usage_svc.list_retry_state(node_id=node_id, status=retry_status, limit=limit)
+
+    @router.get("/usage/failure-trends", response_model=ProviderModelFailureTrendsResponse)
+    def list_failure_trends(
+        provider: str | None = Query(default=None),
+        model: str | None = Query(default=None),
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> ProviderModelFailureTrendsResponse:
+        usage_svc = service_factory()
+        return usage_svc.get_provider_model_failure_trends(provider=provider, model=model, limit=limit)
 
     return router

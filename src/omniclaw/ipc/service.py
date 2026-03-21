@@ -11,14 +11,17 @@ from typing import Any, TextIO
 
 from fastapi import HTTPException
 
-from omniclaw.company_paths import CompanyPaths, build_company_paths, repo_workspace_root
+from omniclaw.company_paths import CompanyPaths, build_company_paths
 from omniclaw.config import Settings
+from omniclaw.db.enums import NodeType
 from omniclaw.db.models import FormLedger, FormTypeDefinition, Node
 from omniclaw.db.repository import KernelRepository
 from omniclaw.forms.schemas import FormsActionRequest
 from omniclaw.instructions.service import InstructionsService
 from omniclaw.forms.service import FormsService
 from omniclaw.ipc.schemas import IpcActionRequest
+from omniclaw.runtime.schemas import RuntimeActionRequest
+from omniclaw.runtime.service import RuntimeService
 from omniclaw.skills.service import SkillsService
 
 
@@ -47,6 +50,11 @@ class IpcRouterService:
             repository=repository,
             settings=settings,
             skills_service=self._skills_service,
+        )
+        self._runtime_service = RuntimeService(
+            repository=repository,
+            settings=settings,
+            mode=settings.runtime_mode,
         )
         self._instructions_service = instructions_service or InstructionsService(
             settings=settings,
@@ -723,6 +731,14 @@ class IpcRouterService:
             if isinstance(raw_holder, str) and raw_holder:
                 final_holder_node = self._repository.get_node(node_id=raw_holder)
 
+        wake_result = self._trigger_inbox_wake(
+            target_node=final_holder_node or target_node,
+            delivery_path=delivery_path,
+            routed_frontmatter=routed_frontmatter,
+            sender=sender,
+            archive_path=sender_archive_path,
+        )
+
         return {
             "status": "routed",
             "form_id": form_id,
@@ -739,7 +755,122 @@ class IpcRouterService:
             "dead_letter_path": None,
             "feedback_path": None,
             "failure_reason": None,
+            "wake_trigger": wake_result,
         }
+
+    def _trigger_inbox_wake(
+        self,
+        *,
+        target_node: Node | None,
+        delivery_path: Path | None,
+        routed_frontmatter: dict[str, str],
+        sender: Node,
+        archive_path: Path,
+    ) -> dict[str, object]:
+        if target_node is None or delivery_path is None:
+            return {"status": "skipped", "reason": "no target delivery was created"}
+        if target_node.type != NodeType.AGENT:
+            return {"status": "skipped", "reason": f"target node '{target_node.name}' is not an agent"}
+        if not target_node.runtime_config_path:
+            return {"status": "skipped", "reason": f"target agent '{target_node.name}' has no runtime config"}
+
+        prompt_path = self._workspace_inbox_wake_prompt_path()
+        if not prompt_path.exists():
+            return {
+                "status": "skipped",
+                "reason": f"prompt file not found: {prompt_path}",
+                "prompt_path": str(prompt_path),
+            }
+
+        try:
+            prompt_template = prompt_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            return {
+                "status": "failed",
+                "reason": f"unable to read prompt file: {exc}",
+                "prompt_path": str(prompt_path),
+            }
+
+        prompt = self._render_inbox_wake_prompt(
+            prompt_template=prompt_template,
+            target_node=target_node,
+            delivery_path=delivery_path,
+            routed_frontmatter=routed_frontmatter,
+            sender=sender,
+            archive_path=archive_path,
+        )
+        session_key = self._build_inbox_wake_session_key(
+            target_node=target_node,
+            form_id=self._optional_str(routed_frontmatter.get("form_id")) or delivery_path.stem,
+        )
+
+        try:
+            result = self._runtime_service.execute(
+                RuntimeActionRequest(
+                    action="invoke_prompt",
+                    node_id=target_node.id,
+                    prompt=prompt,
+                    session_key=session_key,
+                )
+            )
+        except HTTPException as exc:
+            return {
+                "status": "failed",
+                "reason": str(exc.detail),
+                "prompt_path": str(prompt_path),
+                "session_key": session_key,
+            }
+        except Exception as exc:
+            return {
+                "status": "failed",
+                "reason": str(exc),
+                "prompt_path": str(prompt_path),
+                "session_key": session_key,
+            }
+
+        invocation = result.get("invocation") if isinstance(result, dict) else None
+        artifact_paths = invocation.get("artifact_paths") if isinstance(invocation, dict) else None
+        return {
+            "status": "triggered",
+            "prompt_path": str(prompt_path),
+            "session_key": session_key,
+            "reply": invocation.get("reply") if isinstance(invocation, dict) else None,
+            "artifact_paths": artifact_paths if isinstance(artifact_paths, dict) else None,
+        }
+
+    def _workspace_inbox_wake_prompt_path(self) -> Path:
+        return (self._company_paths.root / "NEW_INBOX_MESSAGE_PROMPT.md").resolve()
+
+    def _render_inbox_wake_prompt(
+        self,
+        *,
+        prompt_template: str,
+        target_node: Node,
+        delivery_path: Path,
+        routed_frontmatter: dict[str, str],
+        sender: Node,
+        archive_path: Path,
+    ) -> str:
+        context = {
+            "agent_name": target_node.name,
+            "sender_name": sender.name,
+            "form_id": self._optional_str(routed_frontmatter.get("form_id")) or "",
+            "form_type": self._optional_str(routed_frontmatter.get("form_type")) or "",
+            "stage": self._optional_str(routed_frontmatter.get("stage")) or "",
+            "stage_skill": self._optional_str(routed_frontmatter.get("stage_skill")) or "",
+            "subject": self._optional_str(routed_frontmatter.get("subject")) or "",
+            "delivery_path": str(delivery_path.resolve()),
+            "archive_path": str(archive_path.resolve()),
+            "target_agent": self._optional_str(routed_frontmatter.get("target_agent")) or "",
+        }
+        rendered = prompt_template
+        for key, value in context.items():
+            rendered = rendered.replace(f"{{{{{key}}}}}", value)
+        return rendered.strip()
+
+    def _build_inbox_wake_session_key(self, *, target_node: Node, form_id: str) -> str:
+        slug = re.sub(r"[^A-Za-z0-9_.:-]+", "-", form_id).strip("-") or "form"
+        return f"ipc:auto-wake:{target_node.name}:{slug}"
 
     def _resolve_form_type(self, frontmatter: dict[str, str]) -> str | None:
         raw = frontmatter.get("form_type")
@@ -1244,9 +1375,10 @@ class IpcRouterService:
         return frontmatter
 
     def _workspace_forms_root(self) -> Path:
-        if self._company_paths.forms_root.exists():
-            return self._company_paths.forms_root
-        return repo_workspace_root() / "forms"
+        forms_root = self._company_paths.forms_root
+        if not forms_root.exists():
+            raise FileNotFoundError(f"company workspace forms root does not exist: {forms_root}")
+        return forms_root
 
     def _workspace_form_skills_root(self, *, form_type: str) -> Path:
         return self._workspace_forms_root() / form_type / "skills"

@@ -28,7 +28,18 @@ from omniclaw.ipc.service import IpcRouterService
 from tests.helpers import migrate_database_to_head
 
 
+def _seed_company_workspace(company_root: Path) -> None:
+    (company_root / "master_skills").mkdir(parents=True, exist_ok=True)
+    shutil.copytree(ROOT / "tests" / "fixtures" / "message-form", company_root / "forms" / "message", dirs_exist_ok=True)
+    shutil.copytree(
+        ROOT / "tests" / "fixtures" / "nanobot_workspace_templates",
+        company_root / "nanobot_workspace_templates",
+        dirs_exist_ok=True,
+    )
+
+
 def _ensure_workspace_dirs(workspace_root: Path) -> None:
+    _seed_company_workspace(workspace_root.parent)
     for relative in (
         "inbox/new",
         "inbox/read",
@@ -48,6 +59,22 @@ def _seed_form_stage_skills(*, workspace_root: Path, form_type: str, skill_names
             f"# {skill_name}\n\nTest fixture skill package.\n",
             encoding="utf-8",
         )
+
+
+def _write_inbox_wake_prompt(workspace_root: Path, content: str | None = None) -> None:
+    prompt_path = workspace_root / "NEW_INBOX_MESSAGE_PROMPT.md"
+    prompt_path.write_text(
+        content
+        or (
+            "Read the newly delivered form at {{delivery_path}}.\n\n"
+            "Form type: {{form_type}}\n"
+            "Stage: {{stage}}\n"
+            "Required skill: {{stage_skill}}\n"
+            "Sender: {{sender_name}}\n"
+            "Subject: {{subject}}\n"
+        ),
+        encoding="utf-8",
+    )
 
 
 def _write_message_file(
@@ -260,6 +287,62 @@ def test_ipc_scan_routes_authorized_message_within_target_window(tmp_path: Path)
         assert form.type == "message"
         assert form.form_type_key == "message"
         assert form.current_status == FormStatus.WAITING_TO_BE_READ.value
+
+
+def test_ipc_scan_triggers_agent_wake_after_delivery(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'ipc-wake.db'}"
+    sender_workspace = tmp_path / "sender-workspace"
+    agent_workspace = tmp_path / "agent-workspace"
+    _ensure_workspace_dirs(sender_workspace)
+    _ensure_workspace_dirs(agent_workspace)
+    _write_inbox_wake_prompt(tmp_path)
+
+    settings = Settings(
+        app_name="omniclaw-kernel",
+        environment="test",
+        log_level="INFO",
+        database_url=database_url,
+        provisioning_mode="mock",
+        allow_privileged_provisioning=False,
+        runtime_mode="mock",
+    )
+    migrate_database_to_head(database_url)
+    app = create_app(settings)
+    repository = KernelRepository(create_session_factory(database_url))
+    repository.create_node(
+        node_type=NodeType.HUMAN,
+        name="Manager_01",
+        status=NodeStatus.ACTIVE,
+        workspace_root=str(sender_workspace.resolve()),
+    )
+    repository.create_node(
+        node_type=NodeType.AGENT,
+        name="Worker_01",
+        status=NodeStatus.ACTIVE,
+        workspace_root=str(agent_workspace.resolve()),
+        runtime_config_path=str((tmp_path / "worker-config.json").resolve()),
+    )
+
+    queue_file = sender_workspace / "outbox" / "send" / "status-update.md"
+    _write_message_file(
+        queue_file=queue_file,
+        sender="Manager_01",
+        target="Worker_01",
+        subject="Daily status",
+    )
+
+    client = TestClient(app)
+    response = client.post("/v1/ipc/actions", json={"action": "scan_messages"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["routed"] == 1
+    item = payload["items"][0]
+    assert item["status"] == "routed"
+    assert item["wake_trigger"]["status"] == "triggered"
+    assert item["wake_trigger"]["prompt_path"] == str((tmp_path / "NEW_INBOX_MESSAGE_PROMPT.md").resolve())
+    assert item["wake_trigger"]["session_key"] == "ipc:auto-wake:Worker_01:status-update"
+    assert "mock reply from Worker_01" in str(item["wake_trigger"]["reply"])
 
 
 def test_ipc_scan_claims_pending_form_under_concurrent_scans(tmp_path: Path) -> None:
@@ -671,9 +754,7 @@ def test_ipc_scan_routes_deploy_new_agent_full_stage_cycle(tmp_path: Path, monke
             encoding="utf-8",
         )
         if skill_name == "deploy-new-nanobot":
-            source_skill_dir = (
-                ROOT / "workspace" / "forms" / "deploy_new_agent" / "skills" / "deploy-new-nanobot"
-            )
+            source_skill_dir = ROOT / "tests" / "fixtures" / "deploy-new-nanobot-skill"
             for child in source_skill_dir.iterdir():
                 if child.name == "SKILL.md":
                     continue
